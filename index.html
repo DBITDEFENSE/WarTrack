@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Apache Strait Runner</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e1a; }
+    canvas { display: block; touch-action: none; }
+    #wartrack-container {
+      display: none;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 9999;
+      background: #000;
+    }
+    #wartrack-container.active { display: block; }
+    #wartrack-container iframe {
+      width: 100%; height: 100%;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- WarTrack overlay (hidden by default) -->
+  <div id="wartrack-container">
+    <iframe id="wartrack-frame" src="" allow="autoplay"></iframe>
+  </div>
+
+  <script>
+    // Global toggle functions for switching between game and WarTrack
+    window.showWarTrack = function() {
+      const container = document.getElementById('wartrack-container');
+      const frame = document.getElementById('wartrack-frame');
+      // Load WarTrack on first open (served by wartrack proxy at port 5173)
+      if (!frame.src || frame.src === '' || frame.src === window.location.href) {
+        frame.src = 'http://localhost:5173/?embedded=1';
+      }
+      container.classList.add('active');
+      // Pause the Phaser game canvas
+      const canvas = document.querySelector('canvas');
+      if (canvas) canvas.style.display = 'none';
+    };
+    window.hideWarTrack = function() {
+      const container = document.getElementById('wartrack-container');
+      container.classList.remove('active');
+      const canvas = document.querySelector('canvas');
+      if (canvas) canvas.style.display = 'block';
+    };
+    // Listen for postMessage from WarTrack iframe
+    window.addEventListener('message', function(e) {
+      if (e.data === 'wartrack-close') {
+        window.hideWarTrack();
+      }
+    });
+  </script>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

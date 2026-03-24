@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+*.db
+wartrack/proxy/db/*.db
+wartrack/proxy/credentials.json
+.claude/

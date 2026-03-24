@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WARTRACK — Global Situational Awareness</title>
+  <script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="https://unpkg.com/satellite.js@5.0.0/dist/satellite.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/h3-js@4.4.0/dist/h3-js.umd.min.js"></script>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.118/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles/hud.css" />
+</head>
+<body>
+  <!-- Scanline overlay -->
+  <div id="scanline-overlay"></div>
+
+  <!-- CesiumJS Globe -->
+  <div id="cesiumContainer"></div>
+
+  <!-- Top Bar HUD -->
+  <div id="hud-top">
+    <button id="btn-back-to-game" class="hud-btn-back" style="display:none;">◀ GAME</button>
+    <div id="hud-title">
+      <span class="title-icon">◆</span> WARTRACK <span class="title-sub">GLOBAL SITUATIONAL AWARENESS</span>
+    </div>
+    <div id="hud-right-group">
+      <div id="hud-user"></div>
+      <div id="hud-clock">
+        <span id="utc-date"></span>
+        <span id="utc-time"></span>
+        <span class="clock-label">ZULU</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Layer Controls HUD (left side) -->
+  <div id="hud-layers">
+    <div class="hud-panel-title">◈ DATA LAYERS</div>
+    <label class="layer-toggle">
+      <input type="checkbox" id="toggle-flights" checked />
+      <span class="toggle-indicator"></span>
+      <span class="toggle-label">AIR TRAFFIC</span>
+      <span class="toggle-count" id="count-flights">0</span>
+    </label>
+    <div class="layer-sizer"><span class="sizer-label">SIZE</span><input type="range" min="5" max="30" value="10" id="sizer-flights" class="sizer-range" /><span class="sizer-val" id="sizer-flights-val">1.0x</span></div>
+    <label class="layer-toggle">
+      <input type="checkbox" id="toggle-military" checked />
+      <span class="toggle-indicator"></span>
+      <span class="toggle-label">MIL AIRCRAFT</span>
+      <span class="toggle-count" id="count-military">0</span>
+    </label>
+    <label class="layer-toggle">
+      <input type="checkbox" id="toggle-vessels" checked />
+      <span class="toggle-indicator"></span>
+      <span class="toggle-label">VESSELS</span>
+      <span class="toggle-count" id="count-vessels">0</span>
+    </label>
+    <div class="layer-sizer"><span class="sizer-label">SIZE</span><input type="range" min="5" max="30" value="14" id="sizer-vessels" class="sizer-range" /><span class="sizer-val" id="sizer-vessels-val">1.0x</span></div>
+    <label class="layer-toggle">
+      <input type="checkbox" id="toggle-hotspots" checked />
+      <span class="toggle-indicator"></span>
+      <span class="toggle-label">HOTSPOTS</span>
+      <span class="toggle-count" id="count-hotspots">7</span>
+    </label>
+    <label class="layer-toggle">
+      <input type="checkbox" id="toggle-cameras" />
+      <span class="toggle-indicator"></span>
+      <span class="toggle-label">LIVE CAMERAS</span>
+      <span class="toggle-count" id="count-cameras">0</span>
+    </label>
+    <label class="layer-toggle">
+      <input type="checkbox" id="toggle-satellites" checked />
+      <span class="toggle-indicator"></span>
+      <span class="toggle-label">SATELLITES</span>
+      <span class="toggle-count" id="count-satellites">0</span>
+    </label>
+    <div class="layer-sizer"><span class="sizer-label">SIZE</span><input type="range" min="3" max="30" value="8" id="sizer-satellites" class="sizer-range" /><span class="sizer-val" id="sizer-satellites-val">1.0x</span></div>
+    <label class="layer-toggle sub-toggle">
+      <input type="checkbox" id="toggle-coverage" checked />
+      <span class="toggle-indicator"></span>
+      <span class="toggle-label" style="font-size:9px">COVERAGE CONES</span>
+    </label>
+    <label class="layer-toggle">
+      <input type="checkbox" id="toggle-jamming" />
+      <span class="toggle-indicator" style="border-color:#ff5544"></span>
+      <span class="toggle-label">GPS JAMMING</span>
+      <span class="toggle-count" id="count-jamming">0</span>
+    </label>
+    <div class="hud-divider"></div>
+    <label class="layer-toggle thermal-toggle">
+      <input type="checkbox" id="toggle-thermal" />
+      <span class="toggle-indicator thermal-indicator"></span>
+      <span class="toggle-label">THERMAL VIEW</span>
+    </label>
+    <label class="layer-toggle solar-toggle">
+      <input type="checkbox" id="toggle-solarsystem" />
+      <span class="toggle-indicator solar-indicator"></span>
+      <span class="toggle-label">SOLAR SYSTEM</span>
+    </label>
+    <div id="planet-nav" class="planet-nav hidden">
+      <button class="planet-btn" data-planet="Sun">SUN</button>
+      <button class="planet-btn" data-planet="Moon">MOON</button>
+      <button class="planet-btn" data-planet="Mercury">MERC</button>
+      <button class="planet-btn" data-planet="Venus">VENUS</button>
+      <button class="planet-btn" data-planet="Mars">MARS</button>
+      <button class="planet-btn" data-planet="Jupiter">JUP</button>
+      <button class="planet-btn" data-planet="Saturn">SAT</button>
+      <button class="planet-btn" data-planet="Uranus">URA</button>
+      <button class="planet-btn" data-planet="Neptune">NEP</button>
+      <button class="planet-btn" data-planet="Earth">EARTH</button>
+    </div>
+    <div class="hud-divider"></div>
+    <div class="hud-section-title" id="intel-section-toggle">◈ INTEL PANELS <span class="section-arrow">▾</span></div>
+    <div id="intel-section" class="hud-section-body">
+      <button class="hud-btn-briefing" id="btn-briefing" title="AI Executive Briefing">◆ BRIEFING</button>
+      <button class="hud-btn-news" id="btn-news-feed" title="Global News Feed">◈ NEWS</button>
+      <button class="hud-btn-markets" id="btn-markets" title="Defense & Geopolitical Markets">◈ MARKETS</button>
+      <button class="hud-btn-alerts" id="btn-alerts" title="Anomaly Detection Alerts">⚠ ALERTS <span class="alert-badge" id="alert-badge" style="display:none">0</span></button>
+      <button class="hud-btn-favorites" id="btn-favorites" title="Saved Items Watchlist">★ SAVED</button>
+    </div>
+    <div class="hud-divider"></div>
+    <button class="hud-btn-nexus" id="btn-nexus" title="Ask NEXUS Intelligence Advisor">◆ ASK NEXUS</button>
+    <div class="hud-action-row">
+      <button class="hud-btn-cinematic" id="btn-cinematic" title="Auto-tour through global hotspots">▶ CINEMATIC</button>
+      <button class="hud-btn-reset" id="btn-reset-view" title="Return to default globe view">⟲ RESET</button>
+    </div>
+    <div class="hud-divider"></div>
+    <div class="hud-section-title">◈ GLOBE STYLE</div>
+    <div id="globe-style-picker" class="globe-style-picker"></div>
+  </div>
+
+  <!-- Stats HUD (bottom left) -->
+  <div id="hud-stats">
+    <div class="stat-row">
+      <span class="stat-label">TRACKED ENTITIES</span>
+      <span class="stat-value" id="stat-total">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">MIL SIGNATURES</span>
+      <span class="stat-value mil" id="stat-military">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">ORBITAL ASSETS</span>
+      <span class="stat-value" id="stat-satellites" style="color:#00ff88">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">GPS ANOMALY CELLS</span>
+      <span class="stat-value" id="stat-jamming" style="color:#ff5544">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">DATA REFRESH</span>
+      <span class="stat-value" id="stat-refresh">--</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">CAMERA ALT</span>
+      <span class="stat-value" id="stat-altitude">--</span>
+    </div>
+  </div>
+
+  <!-- Detail Panel (right side, slide-in) -->
+  <div id="detail-panel" class="hidden">
+    <div id="detail-header">
+      <span id="detail-title">ENTITY DETAIL</span>
+      <button id="detail-close">✕</button>
+    </div>
+    <div id="detail-body"></div>
+  </div>
+
+  <!-- News Feed Panel (right side, slide-in) -->
+  <div id="news-feed-panel" class="hidden">
+    <div id="news-feed-header">
+      <span class="news-feed-title">◈ WARTRACK // LIVE FEED</span>
+      <button id="news-feed-close">✕</button>
+    </div>
+    <div id="news-feed-controls">
+      <select id="news-feed-filter">
+        <option value="ALL">ALL REGIONS</option>
+      </select>
+      <button id="news-feed-refresh">↻ REFRESH</button>
+    </div>
+    <div id="news-feed-body"></div>
+  </div>
+
+  <!-- Favorites Panel (right side, slide-in) -->
+  <div id="favorites-panel" class="hidden">
+    <div id="favorites-header">
+      <span class="favorites-title">★ SAVED ITEMS</span>
+      <button id="favorites-close">✕</button>
+    </div>
+    <div id="favorites-body"></div>
+  </div>
+
+  <!-- NEXUS Intelligence Advisor Panel (bottom-right) -->
+  <div id="nexus-panel" class="hidden">
+    <div id="nexus-header">
+      <span class="nexus-title">◆ NEXUS ADVISOR</span>
+      <button id="nexus-close">✕</button>
+    </div>
+    <div id="nexus-avatar-slot"></div>
+    <div id="nexus-messages"></div>
+    <div id="nexus-input-row">
+      <input type="text" id="nexus-input" placeholder="Ask about any region or situation..." autocomplete="off" />
+      <button id="nexus-submit">▶</button>
+    </div>
+  </div>
+
+  <!-- Alerts Panel (right side, slide-in) -->
+  <div id="alerts-panel" class="hidden">
+    <div id="alerts-header">
+      <span class="alerts-title">⚠ ANOMALY ALERTS</span>
+      <button id="alerts-close">✕</button>
+    </div>
+    <div id="alerts-body"></div>
+  </div>
+
+  <!-- Cinematic overlay (managed by cinematic.js) -->
+
+  <!-- Market Intelligence Panel (right side, slide-in) -->
+  <div id="market-panel" class="hidden">
+    <div id="market-header">
+      <span class="market-title">◈ MARKET INTELLIGENCE</span>
+      <button id="market-close">✕</button>
+    </div>
+    <div id="market-search-row">
+      <input type="text" id="market-search" placeholder="SEARCH ANY TICKER..." />
+      <button id="market-search-btn">GO</button>
+    </div>
+    <div id="market-controls">
+      <select id="market-filter">
+        <option value="all">ALL SECTORS</option>
+        <option value="defense">DEFENSE</option>
+        <option value="aerospace">AEROSPACE</option>
+        <option value="maritime">MARITIME</option>
+        <option value="logistics">LOGISTICS</option>
+        <option value="industrial">INDUSTRIAL</option>
+        <option value="energy">ENERGY</option>
+        <option value="gold">GOLD / SAFE HAVEN</option>
+        <option value="etf">ETF / MACRO</option>
+      </select>
+      <button id="market-refresh">↻ REFRESH</button>
+    </div>
+    <div id="market-body"></div>
+  </div>
+
+  <!-- Timeline / Replay Bar (bottom) -->
+  <div id="timeline-bar" class="hidden"></div>
+
+  <!-- Vignette overlay for thermal mode -->
+  <div id="vignette-overlay" class="hidden"></div>
+
+  <!-- Loading overlay -->
+  <div id="loading-overlay">
+    <div class="loading-text">INITIALIZING WARTRACK...</div>
+    <div class="loading-bar"><div class="loading-fill"></div></div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

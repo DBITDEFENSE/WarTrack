@@ -1,0 +1,9 @@
+{
+  "name": "wartrack",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npx serve -p 5173 -s --cors",
+    "proxy": "cd proxy && node server.js"
+  }
+}

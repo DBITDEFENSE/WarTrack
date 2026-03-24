@@ -1,0 +1,45 @@
+{
+  "prefixes": [
+    "AE", "43", "44",
+    "3B", "3C",
+    "33", "34", "35",
+    "3F",
+    "C0", "C1",
+    "71", "72", "73", "74",
+    "E4",
+    "50", "51",
+    "7C", "7D",
+    "C8", "C9",
+    "48",
+    "68",
+    "00",
+    "4B"
+  ],
+  "knownHex": {
+    "AE0000": { "country": "US", "branch": "USAF", "note": "US Military" },
+    "AE1000": { "country": "US", "branch": "US Army", "note": "US Military" },
+    "AE2000": { "country": "US", "branch": "US Navy", "note": "US Military" },
+    "43C000": { "country": "UK", "branch": "RAF", "note": "Royal Air Force" },
+    "3B0000": { "country": "FR", "branch": "French AF", "note": "Armée de l'Air" },
+    "3F0000": { "country": "DE", "branch": "Luftwaffe", "note": "German Air Force" },
+    "C0F000": { "country": "CA", "branch": "RCAF", "note": "Royal Canadian Air Force" },
+    "710000": { "country": "AU", "branch": "RAAF", "note": "Royal Australian Air Force" },
+    "E40000": { "country": "BR", "branch": "FAB", "note": "Brazilian Air Force" },
+    "500000": { "country": "IL", "branch": "IAF", "note": "Israeli Air Force" },
+    "7C0000": { "country": "CN", "branch": "PLAAF", "note": "Chinese Air Force" },
+    "C80000": { "country": "IN", "branch": "IAF", "note": "Indian Air Force" },
+    "480000": { "country": "NL", "branch": "RNLAF", "note": "Royal Netherlands Air Force" },
+    "680000": { "country": "NZ", "branch": "RNZAF", "note": "Royal New Zealand Air Force" },
+    "000000": { "country": "INT", "branch": "NATO", "note": "NATO/Allied" }
+  },
+  "callsignPatterns": [
+    "FORTE", "HOMER", "JAKE", "DUKE", "LAGR", "EVAC",
+    "RCH", "REACH", "CASA", "MOOSE", "BULL", "DARK",
+    "VIPER", "SNAKE", "WOLF", "HAWK", "RAPTOR", "REAPER",
+    "GLOBAL", "ATLAS", "NCHO", "NATO", "DOOM", "KNIFE",
+    "TOPCAT", "BLOCKED", "SIGNT", "AWACS", "SENTRY",
+    "RIVET", "COBRA", "JOINT", "MAGIC", "GIANT", "IRON",
+    "STEEL", "VALOR", "BRAVE", "FURY", "STORM", "STRIKE",
+    "BOXER", "LANCE", "TALON", "ROGUE", "SCOUT", "SPIKE"
+  ]
+}
