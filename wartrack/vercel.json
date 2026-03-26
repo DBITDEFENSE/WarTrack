@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://wartrack-api.railway.app/api/:path*" }
+    { "source": "/api/:path*", "destination": "https://wartrack-production.up.railway.app/api/:path*" }
   ],
   "headers": [
     {
