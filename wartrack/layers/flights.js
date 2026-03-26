@@ -152,21 +152,110 @@ export async function initFlights(viewer) {
 }
 
 // ============================================
-// FETCH & UPDATE
+// HOTSPOT REGIONS — fetch these on initial load for quick data
+// ============================================
+const HOTSPOT_BBOXES = [
+  { lamin: 44, lamax: 53, lomin: 24, lomax: 40 },   // Ukraine
+  { lamin: 20, lamax: 27, lomin: 118, lomax: 123 },  // Taiwan Strait
+  { lamin: 10, lamax: 20, lomin: 38, lomax: 48 },    // Red Sea
+  { lamin: 23, lamax: 30, lomin: 51, lomax: 60 },    // Strait of Hormuz
+  { lamin: 29, lamax: 33, lomin: 32, lomax: 37 },    // Gaza
+  { lamin: 5, lamax: 18, lomin: 108, lomax: 120 },   // South China Sea
+  { lamin: 35, lamax: 42, lomin: 124, lomax: 130 },  // Korea DMZ
+];
+
+function getViewportBbox(viewer) {
+  try {
+    const canvas = viewer.scene.canvas;
+    const corners = [
+      new Cesium.Cartesian2(0, 0),
+      new Cesium.Cartesian2(canvas.width, 0),
+      new Cesium.Cartesian2(0, canvas.height),
+      new Cesium.Cartesian2(canvas.width, canvas.height),
+      new Cesium.Cartesian2(canvas.width / 2, canvas.height / 2),
+    ];
+    let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+    let valid = 0;
+    for (const c of corners) {
+      const ray = viewer.camera.getPickRay(c);
+      if (!ray) continue;
+      const pos = viewer.scene.globe.pick(ray, viewer.scene);
+      if (!pos) continue;
+      const carto = Cesium.Cartographic.fromCartesian(pos);
+      const lat = Cesium.Math.toDegrees(carto.latitude);
+      const lon = Cesium.Math.toDegrees(carto.longitude);
+      minLat = Math.min(minLat, lat);
+      maxLat = Math.max(maxLat, lat);
+      minLon = Math.min(minLon, lon);
+      maxLon = Math.max(maxLon, lon);
+      valid++;
+    }
+    if (valid < 2) return null; // zoomed out too far, globe edges not hitting
+    // Clamp and add padding
+    const pad = Math.max(2, (maxLat - minLat) * 0.1);
+    return {
+      lamin: Math.max(-90, minLat - pad).toFixed(1),
+      lamax: Math.min(90, maxLat + pad).toFixed(1),
+      lomin: Math.max(-180, minLon - pad).toFixed(1),
+      lomax: Math.min(180, maxLon + pad).toFixed(1),
+    };
+  } catch { return null; }
+}
+
+async function fetchRegion(bbox) {
+  try {
+    const resp = await fetch(apiUrl(`/api/flights?lamin=${bbox.lamin}&lamax=${bbox.lamax}&lomin=${bbox.lomin}&lomax=${bbox.lomax}`));
+    if (resp.ok) {
+      const data = await resp.json();
+      return data?.states || [];
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
+// ============================================
+// FETCH & UPDATE — viewport + hotspot based
 // ============================================
 export async function updateFlights(viewer) {
-  if (!dataSource) return; // not initialized yet
+  if (!dataSource) return;
   try {
-    let data;
-    try {
-      const resp = await fetch(apiUrl('/api/flights'));
-      if (resp.ok) data = await resp.json();
-    } catch { /* ignore */ }
+    // Collect states from multiple regions
+    let allStates = [];
 
-    // If merged endpoint failed, keep existing entities on screen
-    if (!data || !data.states) return;
+    // On first load or when zoomed out, fetch hotspot regions
+    if (flightEntities.size === 0) {
+      // Fetch first 3 hotspot regions in parallel for fast initial load
+      const initialBatch = HOTSPOT_BBOXES.slice(0, 3);
+      const results = await Promise.all(initialBatch.map(fetchRegion));
+      for (const states of results) allStates.push(...states);
 
-    const states = data.states;
+      // Fetch remaining hotspots in background (don't block)
+      Promise.all(HOTSPOT_BBOXES.slice(3).map(fetchRegion)).then(results => {
+        const extraStates = results.flat();
+        if (extraStates.length > 0) {
+          processStates(viewer, extraStates, false); // merge, don't clear
+        }
+      }).catch(() => {});
+    }
+
+    // Also fetch current viewport
+    const bbox = getViewportBbox(viewer);
+    if (bbox) {
+      const viewStates = await fetchRegion(bbox);
+      allStates.push(...viewStates);
+    }
+
+    if (allStates.length === 0 && flightEntities.size > 0) return; // keep existing
+    if (allStates.length === 0) return;
+
+    processStates(viewer, allStates, true);
+
+  } catch (err) {
+    console.warn('Flight data fetch error:', err);
+  }
+}
+
+function processStates(viewer, states, clearStale) {
     const activeIcaos = new Set();
     let totalFlights = 0;
     let milCount = 0;
@@ -253,33 +342,31 @@ export async function updateFlights(viewer) {
       }
     }
 
-    // Remove stale
-    for (const [icao, entity] of flightEntities) {
-      if (!activeIcaos.has(icao)) {
-        dataSource.entities.remove(entity);
-        flightEntities.delete(icao);
-        removeTrail(icao);
+    // Remove stale entities only on full refresh (not incremental merge)
+    if (clearStale) {
+      for (const [icao, entity] of flightEntities) {
+        if (!activeIcaos.has(icao)) {
+          dataSource.entities.remove(entity);
+          flightEntities.delete(icao);
+          removeTrail(icao);
+        }
       }
     }
 
     dataSource.entities.resumeEvents();
 
-    appState.flightCount = totalFlights;
+    appState.flightCount = flightEntities.size;
     appState.militaryCount = milCount;
     appState.lastRefresh = Date.now();
     updateStats();
     viewer.scene.requestRender();
 
-    // Share raw states with jamming layer (avoids duplicate API call)
-    if (data.states) {
+    // Share raw states with jamming layer
+    if (states.length > 0) {
       window.dispatchEvent(new CustomEvent('wartrack-flight-data', {
-        detail: { states: data.states, timestamp: data.time }
+        detail: { states, timestamp: Math.floor(Date.now() / 1000) }
       }));
     }
-
-  } catch (err) {
-    console.warn('Flight data fetch error:', err);
-  }
 }
 
 // ============================================
