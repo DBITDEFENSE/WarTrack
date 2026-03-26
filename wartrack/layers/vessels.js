@@ -22,42 +22,116 @@ window.addEventListener('wartrack-icon-resize', (e) => {
   window.viewer?.scene?.requestRender();
 });
 
-// Ship type classification
+// ============================================
+// VESSEL CLASSIFICATION — AIS ship type codes → icon + color
+// ============================================
 const SHIP_TYPES = {
-  CARGO: { color: '#0088ff', label: 'CARGO' },
-  TANKER: { color: '#ff8800', label: 'TANKER' },
-  PASSENGER: { color: '#00cc44', label: 'PASSENGER' },
-  MILITARY: { color: '#ff3344', label: 'MILITARY' },
-  FISHING: { color: '#44aaff', label: 'FISHING' },
-  TUG: { color: '#aa88ff', label: 'TUG' },
-  OTHER: { color: '#6688aa', label: 'VESSEL' }
+  CONTAINER:  { color: '#0088ff', label: 'CONTAINER', size: 16 },
+  BULK:       { color: '#3377cc', label: 'BULK CARRIER', size: 16 },
+  CARGO:      { color: '#4488dd', label: 'CARGO', size: 14 },
+  TANKER:     { color: '#ff8800', label: 'TANKER', size: 16 },
+  LNG:        { color: '#ffaa33', label: 'LNG TANKER', size: 17 },
+  PASSENGER:  { color: '#00cc44', label: 'PASSENGER', size: 18 },
+  CRUISE:     { color: '#00ee55', label: 'CRUISE', size: 20 },
+  MILITARY:   { color: '#ff3344', label: 'MILITARY', size: 16 },
+  FISHING:    { color: '#44aaff', label: 'FISHING', size: 10 },
+  TUG:        { color: '#aa88ff', label: 'TUG', size: 10 },
+  PILOT:      { color: '#ccaa44', label: 'PILOT', size: 9 },
+  SAR:        { color: '#ff6644', label: 'SAR', size: 12 },
+  PLEASURE:   { color: '#66ccbb', label: 'YACHT', size: 9 },
+  SAIL:       { color: '#77bbaa', label: 'SAILING', size: 9 },
+  OTHER:      { color: '#6688aa', label: 'VESSEL', size: 12 }
 };
 
 function classifyShipType(shipType) {
   if (!shipType) return SHIP_TYPES.OTHER;
   const t = Number(shipType);
+  // Cargo sub-types
+  if (t === 71 || t === 72) return SHIP_TYPES.CONTAINER;
+  if (t === 73 || t === 74) return SHIP_TYPES.BULK;
   if (t >= 70 && t <= 79) return SHIP_TYPES.CARGO;
+  // Tanker sub-types
+  if (t === 84) return SHIP_TYPES.LNG;
   if (t >= 80 && t <= 89) return SHIP_TYPES.TANKER;
+  // Passenger
+  if (t === 69) return SHIP_TYPES.CRUISE;
   if (t >= 60 && t <= 69) return SHIP_TYPES.PASSENGER;
+  // Military/government
   if (t >= 35 && t <= 39) return SHIP_TYPES.MILITARY;
+  if (t === 55) return SHIP_TYPES.MILITARY; // law enforcement
+  // Service
   if (t === 30) return SHIP_TYPES.FISHING;
   if (t >= 31 && t <= 32) return SHIP_TYPES.TUG;
+  if (t === 50) return SHIP_TYPES.PILOT;
+  if (t === 51) return SHIP_TYPES.SAR;
+  // Pleasure/sailing
+  if (t >= 36 && t <= 37) return SHIP_TYPES.PLEASURE;
+  if (t === 36) return SHIP_TYPES.SAIL;
   return SHIP_TYPES.OTHER;
 }
 
-function createShipSvg(color) {
-  return `data:image/svg+xml,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">
-      <defs>
-        <filter id="glow"><feGaussianBlur stdDeviation="1" result="blur"/>
-          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-      </defs>
-      <g filter="url(#glow)">
-        <polygon points="10,2 16,14 10,12 4,14" fill="${color}" opacity="0.85"/>
-      </g>
-    </svg>
-  `)}`;
+// ============================================
+// VESSEL SVG SILHOUETTES — top-down, 24x24 viewBox, bow pointing up
+// ============================================
+const VESSEL_SHAPES = {
+  // Container ship — rectangular with stacked containers
+  CONTAINER: (c) => `<path d="M12 2 L14 4 L14 7 L15 7 L15 17 L14 17 L14 19 L12 20 L10 19 L10 17 L9 17 L9 7 L10 7 L10 4 Z" fill="${c}" opacity="0.9"/><line x1="9.5" y1="9" x2="14.5" y2="9" stroke="${c}" stroke-width="0.4" opacity="0.5"/><line x1="9.5" y1="12" x2="14.5" y2="12" stroke="${c}" stroke-width="0.4" opacity="0.5"/><line x1="9.5" y1="15" x2="14.5" y2="15" stroke="${c}" stroke-width="0.4" opacity="0.5"/>`,
+
+  // Bulk carrier — wider, rounder bow
+  BULK: (c) => `<path d="M12 2 L14.5 5 L15 8 L15 17 L14 19 L12 20 L10 19 L9 17 L9 8 L9.5 5 Z" fill="${c}" opacity="0.9"/>`,
+
+  // General cargo — standard ship shape
+  CARGO: (c) => `<path d="M12 2.5 L14 5 L14.5 8 L14.5 17 L13.5 19 L12 20 L10.5 19 L9.5 17 L9.5 8 L10 5 Z" fill="${c}" opacity="0.9"/>`,
+
+  // Tanker — wide midship, rounded
+  TANKER: (c) => `<path d="M12 2 L14 5 L15.5 8 L15.5 15 L15 17 L13.5 19 L12 20 L10.5 19 L9 17 L8.5 15 L8.5 8 L10 5 Z" fill="${c}" opacity="0.9"/><circle cx="12" cy="11" r="2" fill="none" stroke="${c}" stroke-width="0.4" opacity="0.4"/>`,
+
+  // LNG tanker — tanker with dome shapes
+  LNG: (c) => `<path d="M12 2 L14 5 L15.5 8 L15.5 16 L14 19 L12 20 L10 19 L8.5 16 L8.5 8 L10 5 Z" fill="${c}" opacity="0.9"/><circle cx="12" cy="9" r="1.5" fill="none" stroke="${c}" stroke-width="0.5" opacity="0.5"/><circle cx="12" cy="13" r="1.5" fill="none" stroke="${c}" stroke-width="0.5" opacity="0.5"/>`,
+
+  // Passenger — sleeker, longer
+  PASSENGER: (c) => `<path d="M12 1.5 L13.5 4 L14 7 L14 16 L13 18.5 L12 20 L11 18.5 L10 16 L10 7 L10.5 4 Z" fill="${c}" opacity="0.9"/><line x1="10.5" y1="6" x2="13.5" y2="6" stroke="${c}" stroke-width="0.3" opacity="0.4"/>`,
+
+  // Cruise — large passenger, wider
+  CRUISE: (c) => `<path d="M12 1 L14 4 L15 7 L15 16 L14 18.5 L12 20.5 L10 18.5 L9 16 L9 7 L10 4 Z" fill="${c}" opacity="0.9"/><line x1="9.5" y1="7" x2="14.5" y2="7" stroke="${c}" stroke-width="0.3" opacity="0.4"/><line x1="9.5" y1="10" x2="14.5" y2="10" stroke="${c}" stroke-width="0.3" opacity="0.4"/><circle cx="12" cy="4" r="1" fill="${c}" opacity="0.5"/>`,
+
+  // Military — angular, aggressive bow
+  MILITARY: (c) => `<path d="M12 1 L14 6 L14.5 9 L14.5 15 L14 17.5 L12 19 L10 17.5 L9.5 15 L9.5 9 L10 6 Z" fill="${c}" opacity="0.95"/><line x1="12" y1="7" x2="12" y2="12" stroke="${c}" stroke-width="0.5" opacity="0.4"/>`,
+
+  // Fishing — small, with outriggers
+  FISHING: (c) => `<path d="M12 3 L13.5 6 L14 9 L14 15 L13 17 L12 18 L11 17 L10 15 L10 9 L10.5 6 Z" fill="${c}" opacity="0.85"/><line x1="8" y1="10" x2="16" y2="10" stroke="${c}" stroke-width="0.4" opacity="0.4"/>`,
+
+  // Tug — compact, powerful
+  TUG: (c) => `<path d="M12 4 L13.5 6 L14 8 L14 14 L13 16 L12 17 L11 16 L10 14 L10 8 L10.5 6 Z" fill="${c}" opacity="0.9"/>`,
+
+  // Pilot vessel — small, distinct
+  PILOT: (c) => `<path d="M12 4 L13 6 L13.5 8 L13.5 14 L12.5 16 L12 17 L11.5 16 L10.5 14 L10.5 8 L11 6 Z" fill="${c}" opacity="0.85"/>`,
+
+  // SAR — rescue vessel
+  SAR: (c) => `<path d="M12 3 L14 6 L14.5 9 L14.5 15 L13.5 17 L12 18 L10.5 17 L9.5 15 L9.5 9 L10 6 Z" fill="${c}" opacity="0.9"/><line x1="10" y1="8" x2="14" y2="12" stroke="${c}" stroke-width="0.5" opacity="0.5"/><line x1="14" y1="8" x2="10" y2="12" stroke="${c}" stroke-width="0.5" opacity="0.5"/>`,
+
+  // Pleasure/yacht — sleek, small
+  PLEASURE: (c) => `<path d="M12 4 L13 7 L13.5 10 L13.5 15 L12.5 17 L12 18 L11.5 17 L10.5 15 L10.5 10 L11 7 Z" fill="${c}" opacity="0.8"/>`,
+
+  // Sailing vessel
+  SAIL: (c) => `<path d="M12 3 L13 7 L13 15 L12 17 L11 15 L11 7 Z" fill="${c}" opacity="0.8"/><path d="M13 6 L16 12 L13 12 Z" fill="${c}" opacity="0.35"/>`,
+
+  // Generic/other
+  OTHER: (c) => `<path d="M12 3 L13.5 6 L14 9 L14 16 L13 18 L12 19 L11 18 L10 16 L10 9 L10.5 6 Z" fill="${c}" opacity="0.8"/>`,
+};
+
+const vesselIconCache = new Map();
+
+function createShipSvg(shipClass) {
+  const key = `${shipClass.label}-${shipClass.color}`;
+  if (vesselIconCache.has(key)) return vesselIconCache.get(key);
+
+  const shapeFn = VESSEL_SHAPES[Object.keys(SHIP_TYPES).find(k => SHIP_TYPES[k] === shipClass)] || VESSEL_SHAPES.OTHER;
+  const svg = `data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">${shapeFn(shipClass.color)}</svg>`
+  )}`;
+  vesselIconCache.set(key, svg);
+  return svg;
 }
 
 // ============================================
@@ -110,9 +184,9 @@ export async function updateVessels(viewer) {
           id: `vessel-${id}`,
           position: Cesium.Cartesian3.fromDegrees(v.lon, v.lat, 0),
           billboard: {
-            image: createShipSvg(shipClass.color),
-            width: 14 * vesselIconScale,
-            height: 14 * vesselIconScale,
+            image: createShipSvg(shipClass),
+            width: (shipClass.size || 14) * vesselIconScale,
+            height: (shipClass.size || 14) * vesselIconScale,
             rotation: Cesium.Math.toRadians(-(v.heading || v.cog || 0)),
             verticalOrigin: Cesium.VerticalOrigin.CENTER,
             horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
