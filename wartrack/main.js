@@ -294,11 +294,9 @@ async function init() {
     initAlerts(viewer);
     initNexus(viewer);
 
-    // First data fetch
-    await Promise.all([
-      updateFlights(viewer),
-      updateVessels(viewer)
-    ]);
+    // First data fetch — fire and forget (don't block init)
+    updateFlights(viewer).catch(e => console.warn('Initial flight fetch:', e.message));
+    updateVessels(viewer).catch(e => console.warn('Initial vessel fetch:', e.message));
 
     // Update stats periodically
     setInterval(updateStats, 3000);
