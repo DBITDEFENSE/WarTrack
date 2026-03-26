@@ -124,6 +124,123 @@ async function fetchOpenSky() {
 }
 
 // ============================================
+// MERGED FLIGHTS — OpenSky + ADSB-X with deduplication
+// ============================================
+let mergedFlightsCache = { data: null, timestamp: 0 };
+const MERGED_CACHE_TTL = 20000; // 20 seconds
+
+// ADSB-X regional fetch points for global coverage
+const ADSBX_REGIONS = [
+  { lat: 50, lon: 10, dist: 250, name: 'Europe' },
+  { lat: 35, lon: -40, dist: 250, name: 'N-Atlantic' },
+  { lat: 40, lon: -95, dist: 250, name: 'N-America' },
+  { lat: 25, lon: 55, dist: 250, name: 'Middle-East' },
+  { lat: 35, lon: 120, dist: 250, name: 'E-Asia' },
+  { lat: 10, lon: 105, dist: 250, name: 'SE-Asia' },
+];
+
+async function fetchAdsbxRegion(lat, lon, dist) {
+  if (!ADSBX_API_KEY) return [];
+  try {
+    const adsbxUrl = `https://adsbexchange-com1.p.rapidapi.com/v2/lat/${lat}/lon/${lon}/dist/${dist}/`;
+    const { data, statusCode } = await fetchUrl(adsbxUrl, {
+      headers: {
+        'X-RapidAPI-Key': ADSBX_API_KEY,
+        'X-RapidAPI-Host': 'adsbexchange-com1.p.rapidapi.com'
+      }
+    });
+    if (statusCode === 200 && data?.ac) {
+      return data.ac.map(ac => ([
+        (ac.hex || '').toLowerCase(),       // 0: icao24
+        (ac.flight || '').trim(),           // 1: callsign
+        ac.r || '',                         // 2: origin (registration country)
+        null,                               // 3: time_position
+        null,                               // 4: last_contact
+        ac.lon,                             // 5: longitude
+        ac.lat,                             // 6: latitude
+        ac.alt_baro === 'ground' ? 0 : (ac.alt_baro ? ac.alt_baro * 0.3048 : null), // 7: baro alt (ft→m)
+        ac.alt_baro === 'ground',           // 8: on_ground
+        ac.gs ? ac.gs * 0.5144 : null,     // 9: velocity (kts→m/s)
+        ac.track,                           // 10: heading
+        ac.baro_rate ? ac.baro_rate * 0.00508 : null, // 11: vert rate (fpm→m/s)
+        null,                               // 12: sensors
+        ac.alt_geom ? ac.alt_geom * 0.3048 : null, // 13: geo alt (ft→m)
+        ac.squawk,                          // 14: squawk
+      ]));
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+async function fetchMergedFlights() {
+  const now = Date.now();
+  if (mergedFlightsCache.data && (now - mergedFlightsCache.timestamp) < MERGED_CACHE_TTL) {
+    return { data: mergedFlightsCache.data, cached: true, sources: ['cache'] };
+  }
+
+  const sources = [];
+  const aircraftMap = new Map(); // icao24 → state array
+
+  // Source 1: OpenSky (global coverage, may be rate-limited)
+  try {
+    const opensky = await fetchOpenSky();
+    if (opensky.data?.states) {
+      sources.push('opensky');
+      for (const state of opensky.data.states) {
+        const icao = (state[0] || '').toLowerCase();
+        if (icao && state[5] && state[6]) {
+          aircraftMap.set(icao, state);
+        }
+      }
+    }
+  } catch { /* opensky failed */ }
+
+  // Source 2: ADSB-X (regional fetches, run in parallel)
+  if (ADSBX_API_KEY) {
+    try {
+      // Fetch 2 regions at a time to stay within rate limits
+      for (let i = 0; i < ADSBX_REGIONS.length; i += 2) {
+        const batch = ADSBX_REGIONS.slice(i, i + 2);
+        const results = await Promise.all(
+          batch.map(r => fetchAdsbxRegion(r.lat, r.lon, r.dist))
+        );
+        let adsbxCount = 0;
+        for (const states of results) {
+          for (const state of states) {
+            const icao = (state[0] || '').toLowerCase();
+            if (icao && state[5] && state[6]) {
+              // Only add if not already from OpenSky (OpenSky has better global position data)
+              if (!aircraftMap.has(icao)) {
+                aircraftMap.set(icao, state);
+                adsbxCount++;
+              }
+            }
+          }
+        }
+        if (adsbxCount > 0) sources.push('adsbx');
+      }
+    } catch { /* adsbx failed */ }
+  }
+
+  // Build merged response in OpenSky format
+  const mergedStates = Array.from(aircraftMap.values());
+  const result = {
+    time: Math.floor(now / 1000),
+    states: mergedStates.length > 0 ? mergedStates : null,
+    sources,
+    count: mergedStates.length,
+  };
+
+  if (mergedStates.length > 0) {
+    mergedFlightsCache = { data: result, timestamp: now };
+  }
+
+  return { data: result, cached: false, sources };
+}
+
+// ============================================
 // HTTP FETCH UTILITY (supports GET and POST)
 // ============================================
 const MIME_TYPES = {
@@ -253,11 +370,20 @@ const server = http.createServer(async (req, res) => {
       if (handled !== false) return;
     }
 
-    // ---- OPENSKY ----
+    // ---- OPENSKY (legacy, still available) ----
     if (urlPath === '/api/opensky') {
       const result = await fetchOpenSky();
       res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
       if (result.rateLimited) res.setHeader('X-Rate-Limited', 'true');
+      res.writeHead(200);
+      return res.end(JSON.stringify(result.data));
+    }
+
+    // ---- MERGED FLIGHTS (OpenSky + ADSB-X, deduplicated) ----
+    if (urlPath === '/api/flights') {
+      const result = await fetchMergedFlights();
+      res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
+      res.setHeader('X-Sources', result.sources.join(','));
       res.writeHead(200);
       return res.end(JSON.stringify(result.data));
     }

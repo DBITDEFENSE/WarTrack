@@ -159,17 +159,11 @@ export async function updateFlights(viewer) {
   try {
     let data;
     try {
-      const resp = await fetch(apiUrl('/api/opensky'));
+      const resp = await fetch(apiUrl('/api/flights'));
       if (resp.ok) data = await resp.json();
     } catch { /* ignore */ }
 
-    if (!data || !data.states) {
-      try {
-        const resp = await fetch('https://opensky-network.org/api/states/all');
-        if (resp.ok) data = await resp.json();
-      } catch { /* ignore */ }
-    }
-
+    // If merged endpoint failed, keep existing entities on screen
     if (!data || !data.states) return;
 
     const states = data.states;
