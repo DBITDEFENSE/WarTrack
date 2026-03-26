@@ -3391,20 +3391,54 @@ body.thermal-active #hud-title {
     max-height: 90vh;
   }
 
-  .toggle-label { font-size: 9px; letter-spacing: 1px; }
-  .toggle-count { font-size: 9px; }
-  .layer-sizer { padding: 0 2px 2px; }
+  .toggle-label { font-size: 10px; letter-spacing: 1px; }
+  .toggle-count { font-size: 10px; }
+  .layer-sizer { padding: 2px 4px 4px; }
+  .sizer-range { height: 24px; } /* bigger touch target */
 
   .hud-btn-news,
   .hud-btn-favorites,
   .hud-btn-briefing,
   .hud-btn-markets,
-  .hud-btn-reset {
-    font-size: 9px;
-    padding: 6px 0;
+  .hud-btn-reset,
+  .hud-btn-nexus {
+    font-size: 10px;
+    padding: 10px 0; /* bigger touch targets */
   }
 
-  .layer-toggle { padding: 4px 0; }
+  .layer-toggle {
+    padding: 6px 0; /* bigger touch targets */
+    min-height: 32px;
+  }
+
+  .toggle-indicator {
+    width: 14px;
+    height: 14px; /* bigger checkbox */
+  }
+
+  .hud-section-title {
+    font-size: 11px;
+    padding: 8px 0; /* easier to tap */
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* Hide stats on mobile to save space */
+  #hud-stats { display: none; }
+
+  /* Settings panel full-width on mobile */
+  #settings-panel {
+    width: 100%;
+    max-width: 100vw;
+  }
+
+  #nexus-panel {
+    width: 100%;
+    max-width: 100vw;
+    bottom: 0;
+    right: 0;
+  }
 }
 
 /* ============================================

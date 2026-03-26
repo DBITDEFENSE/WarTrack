@@ -108,7 +108,26 @@ viewer.scene.skyAtmosphere.hueShift = 0.1;
 
 // Performance: enable request render mode — only re-render when something changes
 viewer.scene.requestRenderMode = true;
-viewer.scene.maximumRenderTimeChange = 0.1; // re-render at ~10fps idle, full speed when moving
+viewer.scene.maximumRenderTimeChange = 0.1;
+
+// Mobile optimization — detect touch devices
+const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+if (isMobile) {
+  // Faster zoom with pinch
+  viewer.scene.screenSpaceCameraController.zoomEventTypes = [
+    Cesium.CameraEventType.WHEEL,
+    Cesium.CameraEventType.PINCH,
+  ];
+  viewer.scene.screenSpaceCameraController.tiltEventTypes = [
+    { eventType: Cesium.CameraEventType.PINCH, modifier: Cesium.KeyboardEventModifier.CTRL },
+  ];
+  // Increase zoom speed for mobile
+  viewer.scene.screenSpaceCameraController._zoomFactor = 3.0;
+  // Lower tile detail on mobile for performance
+  viewer.scene.globe.maximumScreenSpaceError = 4; // default 2 — higher = less detail = faster
+  // Reduce max entities rendered
+  window._wartracMaxCivilian = 500;
+}
 
 // Set initial camera to show whole world with slight tilt
 viewer.camera.flyTo({
@@ -210,12 +229,21 @@ async function init() {
     // Init UI
     initDetailPanel(viewer);
     initLayerControls({
-      onFlightsToggle: setFlightsVisible,
+      onFlightsToggle: (v) => {
+        setFlightsVisible(v);
+        if (v) window.dispatchEvent(new CustomEvent('wartrack-layer-activated', { detail: { layer: 'flights' } }));
+      },
       onMilitaryToggle: (v) => { /* handled inside flights layer */ },
-      onVesselsToggle: setVesselsVisible,
+      onVesselsToggle: (v) => {
+        setVesselsVisible(v);
+        if (v) window.dispatchEvent(new CustomEvent('wartrack-layer-activated', { detail: { layer: 'vessels' } }));
+      },
       onHotspotsToggle: setHotspotsVisible,
       onThermalToggle: (active) => toggleThermal(viewer, active),
-      onSatellitesToggle: setSatellitesVisible,
+      onSatellitesToggle: (v) => {
+        setSatellitesVisible(v);
+        if (v) window.dispatchEvent(new CustomEvent('wartrack-layer-activated', { detail: { layer: 'satellites' } }));
+      },
       onCoverageToggle: setCoverageVisible,
       onCamerasToggle: setCamerasVisible,
       onSocialToggle: (v) => { setSocialVisible(v); if (v) loadContentForVisibleRegions(viewer); },
@@ -294,21 +322,42 @@ async function init() {
     initAlerts(viewer);
     initNexus(viewer);
 
-    // First data fetch — fire and forget (don't block init)
-    updateFlights(viewer).catch(e => console.warn('Initial flight fetch:', e.message));
-    updateVessels(viewer).catch(e => console.warn('Initial vessel fetch:', e.message));
+    // Data layers are NOT fetched on load — user toggles them on
+    // Track which layers have been loaded at least once
+    const layersLoaded = { flights: false, vessels: false, satellites: false };
+
+    // When user toggles a layer ON, fetch data if not yet loaded
+    window.addEventListener('wartrack-layer-activated', (e) => {
+      const layer = e.detail?.layer;
+      if (layer === 'flights' && !layersLoaded.flights) {
+        layersLoaded.flights = true;
+        updateFlights(viewer).catch(e => console.warn('Flight fetch:', e.message));
+      }
+      if (layer === 'vessels' && !layersLoaded.vessels) {
+        layersLoaded.vessels = true;
+        updateVessels(viewer).catch(e => console.warn('Vessel fetch:', e.message));
+      }
+      if (layer === 'satellites' && !layersLoaded.satellites) {
+        layersLoaded.satellites = true;
+        // Satellites init already fetches TLEs — just propagate
+        updateSatellites(viewer);
+      }
+    });
 
     // Update stats periodically
     setInterval(updateStats, 3000);
 
-    // Refresh flight data every 60 seconds (skip during replay)
-    setInterval(() => { if (!isReplayMode()) updateFlights(viewer); }, 60000);
+    // Refresh active layers every 60 seconds (skip during replay)
+    setInterval(() => {
+      if (isReplayMode()) return;
+      if (layersLoaded.flights) updateFlights(viewer);
+      if (layersLoaded.vessels) updateVessels(viewer);
+    }, 60000);
 
-    // Refresh vessel data every 60 seconds (skip during replay)
-    setInterval(() => { if (!isReplayMode()) updateVessels(viewer); }, 60000);
-
-    // Propagate satellite positions every 10 seconds
-    setInterval(() => { if (!isReplayMode()) updateSatellites(viewer); }, 10000);
+    // Propagate satellite positions every 10 seconds (only if loaded)
+    setInterval(() => {
+      if (!isReplayMode() && layersLoaded.satellites) updateSatellites(viewer);
+    }, 10000);
 
     // GPS jamming layer update every 60 seconds (ADSB-X mode only)
     setInterval(() => { if (!isReplayMode()) updateJamming(viewer); }, 60000);

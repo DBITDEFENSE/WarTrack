@@ -148,6 +148,7 @@ export async function initFlights(viewer) {
   await loadData();
   ICON_THERMAL = getThermalIcon();
   dataSource = new Cesium.CustomDataSource('flights');
+  dataSource.show = false; // hidden until user enables
   viewer.dataSources.add(dataSource);
 }
 

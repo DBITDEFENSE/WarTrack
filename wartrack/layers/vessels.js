@@ -65,6 +65,7 @@ function createShipSvg(color) {
 // ============================================
 export function initVessels(viewer) {
   dataSource = new Cesium.CustomDataSource('vessels');
+  dataSource.show = false; // hidden until user enables
   viewer.dataSources.add(dataSource);
 }
 

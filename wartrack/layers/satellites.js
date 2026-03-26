@@ -122,8 +122,18 @@ function propagatePosition(satrec, date) {
 export async function initSatellites(viewer) {
   dataSource = new Cesium.CustomDataSource('satellites');
   viewer.dataSources.add(dataSource);
+  dataSource.show = false; // hidden until user enables
 
-  // Fetch TLE groups sequentially
+  // Don't fetch TLEs eagerly — wait for user to toggle layer on
+  window.addEventListener('wartrack-layer-activated', async (e) => {
+    if (e.detail?.layer === 'satellites' && !loaded) {
+      await loadTLEs(viewer);
+    }
+  });
+}
+
+async function loadTLEs(viewer) {
+  if (loaded) return;
   const groups = [
     { name: 'stations', category: 'OTHER' },
     { name: 'military', category: 'MILITARY' },
