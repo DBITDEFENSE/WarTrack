@@ -110,22 +110,39 @@ viewer.scene.skyAtmosphere.hueShift = 0.1;
 viewer.scene.requestRenderMode = true;
 viewer.scene.maximumRenderTimeChange = 0.1;
 
-// Mobile optimization — detect touch devices
+// Mobile + touch optimization
 const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+const sscc = viewer.scene.screenSpaceCameraController;
+
+// Improve touch controls for ALL devices (helps desktop trackpads too)
+sscc.minimumZoomDistance = 500;       // don't zoom through the globe
+sscc.maximumZoomDistance = 50000000;  // can zoom out to see whole Earth
+
 if (isMobile) {
-  // Faster zoom with pinch
-  viewer.scene.screenSpaceCameraController.zoomEventTypes = [
-    Cesium.CameraEventType.WHEEL,
+  // Single-finger drag = rotate globe (default, keep)
+  // Two-finger pinch = zoom (keep as primary)
+  // Disable tilt from pinch — confusing on mobile, rotate is enough
+  sscc.tiltEventTypes = [];
+  sscc.lookEventTypes = [];
+
+  // Make zoom much more responsive on mobile
+  sscc.zoomEventTypes = [
     Cesium.CameraEventType.PINCH,
+    Cesium.CameraEventType.WHEEL,
   ];
-  viewer.scene.screenSpaceCameraController.tiltEventTypes = [
-    { eventType: Cesium.CameraEventType.PINCH, modifier: Cesium.KeyboardEventModifier.CTRL },
-  ];
-  // Increase zoom speed for mobile
-  viewer.scene.screenSpaceCameraController._zoomFactor = 3.0;
+
+  // Increase zoom sensitivity
+  sscc._zoomFactor = 5.0;
+  sscc.minimumZoomDistance = 1000;
+
+  // Disable inertia for snappier feel
+  sscc.inertiaSpin = 0.5;   // some spin inertia (feels natural)
+  sscc.inertiaZoom = 0;     // no zoom inertia (prevents over-zoom)
+  sscc.inertiaTranslate = 0;
+
   // Lower tile detail on mobile for performance
-  viewer.scene.globe.maximumScreenSpaceError = 4; // default 2 — higher = less detail = faster
-  // Reduce max entities rendered
+  viewer.scene.globe.maximumScreenSpaceError = 4;
+  // Reduce max entities
   window._wartracMaxCivilian = 500;
 }
 

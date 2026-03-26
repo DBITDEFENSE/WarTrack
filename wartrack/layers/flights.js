@@ -205,7 +205,13 @@ function getViewportBbox(viewer) {
 
 async function fetchRegion(bbox) {
   try {
-    const resp = await fetch(apiUrl(`/api/flights?lamin=${bbox.lamin}&lamax=${bbox.lamax}&lomin=${bbox.lomin}&lomax=${bbox.lomax}`));
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000); // 12s client timeout
+    const resp = await fetch(
+      apiUrl(`/api/flights?lamin=${bbox.lamin}&lamax=${bbox.lamax}&lomin=${bbox.lomin}&lomax=${bbox.lomax}`),
+      { signal: controller.signal }
+    );
+    clearTimeout(timeout);
     if (resp.ok) {
       const data = await resp.json();
       return data?.states || [];

@@ -125,11 +125,10 @@ async function fetchOpenSky() {
 
 // ============================================
 // MERGED FLIGHTS — OpenSky (bbox) + ADSB-X (radius), deduplicated
-// Supports ?lamin=&lamax=&lomin=&lomax= for viewport-based loading
-// Also supports ?lat=&lon=&dist= for ADSB-X point queries
+// Both fetched in parallel with 8-second timeout each
 // ============================================
-const flightsRegionCache = new Map(); // cacheKey → { data, timestamp }
-const FLIGHTS_CACHE_TTL = 30000; // 30 seconds per region
+const flightsRegionCache = new Map();
+const FLIGHTS_CACHE_TTL = 30000;
 
 function adsbxToOpenSkyState(ac) {
   return [
@@ -149,8 +148,22 @@ function adsbxToOpenSkyState(ac) {
   ];
 }
 
+// Fetch with timeout — prevents hanging forever
+function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+    fetchUrl(url, options).then(result => {
+      clearTimeout(timer);
+      resolve(result);
+    }).catch(err => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
 async function fetchFlightsForBbox(lamin, lamax, lomin, lomax) {
-  const cacheKey = `${lamin},${lamax},${lomin},${lomax}`;
+  const cacheKey = `${Math.round(lamin)},${Math.round(lamax)},${Math.round(lomin)},${Math.round(lomax)}`;
   const now = Date.now();
   const cached = flightsRegionCache.get(cacheKey);
   if (cached && (now - cached.timestamp) < FLIGHTS_CACHE_TTL) {
@@ -160,24 +173,21 @@ async function fetchFlightsForBbox(lamin, lamax, lomin, lomax) {
   const sources = [];
   const aircraftMap = new Map();
 
-  // Source 1: OpenSky with bounding box (much lighter than global)
-  try {
-    const token = await getOpenSkyToken();
-    const headers = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-    const osUrl = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
-    const { data, statusCode } = await fetchUrl(osUrl, { headers });
-    if (statusCode === 200 && data?.states) {
-      sources.push('opensky');
-      for (const s of data.states) {
-        const icao = (s[0] || '').toLowerCase();
-        if (icao && s[5] && s[6]) aircraftMap.set(icao, s);
-      }
-    }
-  } catch { /* opensky failed */ }
+  // Fetch both sources IN PARALLEL with 8-second timeouts
+  const openSkyPromise = (async () => {
+    try {
+      const token = await getOpenSkyToken();
+      const headers = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const osUrl = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
+      const { data, statusCode } = await fetchWithTimeout(osUrl, { headers }, 8000);
+      if (statusCode === 200 && data?.states) return data.states;
+    } catch { /* timeout or error */ }
+    return [];
+  })();
 
-  // Source 2: ADSB-X (center of bbox, radius to cover area)
-  if (ADSBX_API_KEY) {
+  const adsbxPromise = (async () => {
+    if (!ADSBX_API_KEY) return [];
     try {
       const centerLat = (parseFloat(lamin) + parseFloat(lamax)) / 2;
       const centerLon = (parseFloat(lomin) + parseFloat(lomax)) / 2;
@@ -185,23 +195,35 @@ async function fetchFlightsForBbox(lamin, lamax, lomin, lomax) {
         Math.abs(parseFloat(lamax) - parseFloat(lamin)) * 55
       )));
       const adsbxUrl = `https://adsbexchange-com1.p.rapidapi.com/v2/lat/${centerLat}/lon/${centerLon}/dist/${dist}/`;
-      const { data, statusCode } = await fetchUrl(adsbxUrl, {
-        headers: {
-          'X-RapidAPI-Key': ADSBX_API_KEY,
-          'X-RapidAPI-Host': 'adsbexchange-com1.p.rapidapi.com'
-        }
-      });
-      if (statusCode === 200 && data?.ac) {
-        sources.push('adsbx');
-        for (const ac of data.ac) {
-          const state = adsbxToOpenSkyState(ac);
-          const icao = state[0];
-          if (icao && state[5] && state[6] && !aircraftMap.has(icao)) {
-            aircraftMap.set(icao, state);
-          }
-        }
+      const { data, statusCode } = await fetchWithTimeout(adsbxUrl, {
+        headers: { 'X-RapidAPI-Key': ADSBX_API_KEY, 'X-RapidAPI-Host': 'adsbexchange-com1.p.rapidapi.com' }
+      }, 8000);
+      if (statusCode === 200 && data?.ac) return data.ac;
+    } catch { /* timeout or error */ }
+    return [];
+  })();
+
+  const [openSkyStates, adsbxAircraft] = await Promise.all([openSkyPromise, adsbxPromise]);
+
+  // Merge OpenSky results
+  if (openSkyStates.length > 0) {
+    sources.push('opensky');
+    for (const s of openSkyStates) {
+      const icao = (s[0] || '').toLowerCase();
+      if (icao && s[5] && s[6]) aircraftMap.set(icao, s);
+    }
+  }
+
+  // Merge ADSB-X results (only add new aircraft not already from OpenSky)
+  if (adsbxAircraft.length > 0) {
+    sources.push('adsbx');
+    for (const ac of adsbxAircraft) {
+      const state = adsbxToOpenSkyState(ac);
+      const icao = state[0];
+      if (icao && state[5] && state[6] && !aircraftMap.has(icao)) {
+        aircraftMap.set(icao, state);
       }
-    } catch { /* adsbx failed */ }
+    }
   }
 
   const states = Array.from(aircraftMap.values());
@@ -209,7 +231,6 @@ async function fetchFlightsForBbox(lamin, lamax, lomin, lomax) {
 
   if (states.length > 0) {
     flightsRegionCache.set(cacheKey, { data: result, timestamp: now });
-    // Prune old cache entries (keep max 20)
     if (flightsRegionCache.size > 20) {
       const oldest = flightsRegionCache.keys().next().value;
       flightsRegionCache.delete(oldest);
