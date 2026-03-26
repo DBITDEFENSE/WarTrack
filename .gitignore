@@ -5,3 +5,7 @@ dist/
 wartrack/proxy/db/*.db
 wartrack/proxy/credentials.json
 .claude/
+wartrack/proxy/credentials.json
+wartrack/proxy/db/*.db
+wartrack/proxy/db/*.db-shm
+wartrack/proxy/db/*.db-wal

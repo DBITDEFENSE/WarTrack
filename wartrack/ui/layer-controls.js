@@ -20,16 +20,27 @@ export function initLayerControls(callbacks) {
   document.getElementById('toggle-satellites')?.addEventListener('change', (e) => callbacks.onSatellitesToggle(e.target.checked));
   document.getElementById('toggle-solarsystem')?.addEventListener('change', (e) => callbacks.onSolarSystemToggle(e.target.checked));
 
-  // Icon size sliders
+  // Icon size sliders for all layers
   setupSizer('sizer-flights', 'flights', 10, callbacks.onFlightsResize);
   setupSizer('sizer-vessels', 'vessels', 14, callbacks.onVesselsResize);
+  setupSizer('sizer-hotspots', 'hotspots', 48, callbacks.onHotspotsResize);
   setupSizer('sizer-satellites', 'satellites', 8, callbacks.onSatellitesResize);
+  setupSizer('sizer-cameras', 'cameras', 20, callbacks.onCamerasResize);
+  setupSizer('sizer-social', 'social', 20, callbacks.onSocialResize);
 
   // Coverage cone toggle
   const toggleCoverage = document.getElementById('toggle-coverage');
   if (toggleCoverage) {
     toggleCoverage.addEventListener('change', (e) => {
       if (callbacks.onCoverageToggle) callbacks.onCoverageToggle(e.target.checked);
+    });
+  }
+
+  // Social intel toggle
+  const toggleSocial = document.getElementById('toggle-social');
+  if (toggleSocial) {
+    toggleSocial.addEventListener('change', (e) => {
+      if (callbacks.onSocialToggle) callbacks.onSocialToggle(e.target.checked);
     });
   }
 

@@ -17,7 +17,8 @@ let aircraftTypes = null;
 // Pre-cached thermal icon
 let ICON_THERMAL = null;
 
-const MAX_CIVILIAN = 1500;
+// Settable via settings panel — default 1500
+function getMaxCivilian() { return window._wartracMaxCivilian || 1500; }
 const MAX_TRAIL_POINTS = 15;
 let iconScale = 1.0;
 
@@ -153,6 +154,7 @@ export async function initFlights(viewer) {
 // FETCH & UPDATE
 // ============================================
 export async function updateFlights(viewer) {
+  if (!dataSource) return; // not initialized yet
   try {
     let data;
     try {
@@ -191,7 +193,7 @@ export async function updateFlights(viewer) {
       }
     }
 
-    const cappedCiv = civilianAc.slice(0, MAX_CIVILIAN);
+    const cappedCiv = civilianAc.slice(0, getMaxCivilian());
 
     dataSource.entities.suspendEvents();
 

@@ -10,9 +10,21 @@ let cameraEntities = new Map();
 let visible = true;
 let lastFetchBbox = null;
 let fetchCooldown = false;
+let camIconScale = 1.0;
+
+// Listen for icon resize events
+window.addEventListener('wartrack-icon-resize', (e) => {
+  if (e.detail.layer !== 'cameras') return;
+  camIconScale = e.detail.scale;
+  for (const [id, entity] of cameraEntities) {
+    entity.billboard.width = 20 * camIconScale;
+    entity.billboard.height = 20 * camIconScale;
+  }
+  window.viewer?.scene?.requestRender();
+});
 
 // Camera zoom threshold — only fetch/show cameras when camera altitude < this
-const ZOOM_THRESHOLD_KM = 3000;
+const ZOOM_THRESHOLD_KM = 8000; // increased so cameras appear sooner when zooming in
 
 // Categories for filtering
 const CAMERA_CATEGORIES = {
@@ -153,8 +165,8 @@ function renderCameras(webcams) {
       position: Cesium.Cartesian3.fromDegrees(lon, lat, 0),
       billboard: {
         image: getCachedIcon(category),
-        width: 18,
-        height: 18,
+        width: 20 * camIconScale,
+        height: 20 * camIconScale,
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
         disableDepthTestDistance: 0,

@@ -413,7 +413,7 @@ Respond in JSON only (no markdown):
 
   // POST /api/nexus — Map-aware intelligence advisor
   if (urlPath === '/api/nexus' && req.method === 'POST') {
-    const { query, conversationHistory } = body || {};
+    const { query, conversationHistory, liveContext } = body || {};
 
     if (!query) {
       res.writeHead(400);
@@ -428,9 +428,29 @@ Respond in JSON only (no markdown):
       }));
     }
 
+    // Build live data context string for the prompt
+    let liveDataSection = '';
+    if (liveContext) {
+      liveDataSection = `\n\nLIVE WARTRACK DATA (REAL-TIME):
+- Total tracked aircraft: ${liveContext.totalFlights}
+- Military signatures: ${liveContext.totalMilitary}
+- Vessels tracked: ${liveContext.totalVessels}
+- GPS anomaly cells: ${liveContext.jammingCells}
+- Satellites overhead: ${liveContext.satellites}`;
+
+      if (liveContext.globalSummary && liveContext.globalSummary.length > 0) {
+        liveDataSection += '\n\nTHREAT ASSESSMENT (correlation engine):';
+        for (const r of liveContext.globalSummary) {
+          liveDataSection += `\n- ${r.region}: ${r.threatLevel} (score ${r.score}) — ${r.milAircraft} MIL aircraft, ${r.vessels} vessels, ${r.jammingCells} jamming cells. ${r.topSignal}`;
+        }
+      }
+      liveDataSection += '\n\nIMPORTANT: Reference this live data in your briefing when relevant. Say "our sensors show" or "WarTrack is tracking" to ground your analysis in real data.';
+    }
+
     const systemPrompt = `You are NEXUS, a map-aware intelligence advisor embedded in WarTrack — a global situational awareness command center. You answer geopolitical questions and tie them to specific locations on the globe.
 
 PERSONALITY: Composed, precise, dry confidence. Tactical analyst energy. Concise — never more than 120 words in your briefing.
+${liveDataSection}
 
 GEOPOLITICAL CONTEXT:
 - NATO vs Russia (Ukraine conflict since 2022)

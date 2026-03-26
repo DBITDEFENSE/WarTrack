@@ -105,6 +105,34 @@ function detectAnomalies(current) {
         lon: hs.lon,
       });
     }
+
+    // Rule 4: CORRELATED ESCALATION — mil spike + GPS jamming in same region
+    // Uses correlation engine data if available
+    try {
+      const intel = window._getRegionIntel?.()?.get?.(hs.name);
+      if (intel && intel.compositeScore >= 0.6 && intel.milAircraftCount >= 5 && intel.jammingCells > 0) {
+        addAlert({
+          type: 'CORRELATED_ESCALATION',
+          severity: 'critical',
+          region: hs.name,
+          description: `Multi-signal escalation: ${intel.milAircraftCount} MIL aircraft + ${intel.jammingCells} jamming cells + threat score ${intel.compositeScore.toFixed(2)}`,
+          lat: hs.lat,
+          lon: hs.lon,
+        });
+      }
+
+      // Rule 5: ROUTE AVOIDANCE — low vessel + high mil in trade route zone
+      if (intel && intel.vesselCount <= 3 && intel.milAircraftCount >= 3 && hs.severity !== 'watch') {
+        addAlert({
+          type: 'ROUTE_AVOIDANCE',
+          severity: 'elevated',
+          region: hs.name,
+          description: `Possible route avoidance: only ${intel.vesselCount} vessels near ${intel.milAircraftCount} military aircraft`,
+          lat: hs.lat,
+          lon: hs.lon,
+        });
+      }
+    } catch { /* correlator not ready */ }
   }
 }
 

@@ -72,6 +72,7 @@ export function initVessels(viewer) {
 // We use a simplified approach via proxy returning AIS data
 // ============================================
 export async function updateVessels(viewer) {
+  if (!dataSource) return; // not initialized yet
   try {
     let vessels = [];
     try {

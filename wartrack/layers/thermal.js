@@ -89,20 +89,20 @@ export async function toggleThermal(viewer, active) {
     }
 
     // Restore globe
-    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#0a1018');
+    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#0a1220');
 
     // Restore atmosphere
     if (viewer.scene.skyAtmosphere) {
-      viewer.scene.skyAtmosphere.brightnessShift = -0.3;
-      viewer.scene.skyAtmosphere.saturationShift = -0.7;
+      viewer.scene.skyAtmosphere.brightnessShift = -0.15;
+      viewer.scene.skyAtmosphere.saturationShift = -0.3;
     }
     viewer.scene.globe.showGroundAtmosphere = true;
 
-    // Restore base tiles
+    // Restore base tiles (satellite defaults)
     if (baseLayer) {
-      baseLayer.brightness = 0.7;
-      baseLayer.contrast = 1.2;
-      baseLayer.saturation = 0.4;
+      baseLayer.brightness = 0.85;
+      baseLayer.contrast = 1.1;
+      baseLayer.saturation = 0.8;
       baseLayer.hue = 0.0;
     }
 

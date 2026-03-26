@@ -11,12 +11,14 @@ import { fileURLToPath } from 'url';
 import { handleAuth } from './routes/auth.js';
 import { handleFavorites } from './routes/favorites.js';
 import { handleAI } from './routes/ai.js';
+import { handleBilling } from './routes/billing.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const STATIC_ROOT = path.resolve(__dirname, '..');
 
-const PORT = 5173;
+const PORT = process.env.PORT || 5173;
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
 const GNEWS_API_KEY = process.env.GNEWS_API_KEY || '';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || '';
@@ -165,13 +167,15 @@ function fetchUrl(url, options = {}) {
 function parseBody(req) {
   return new Promise((resolve) => {
     if (req.method === 'GET' || req.method === 'OPTIONS') {
-      return resolve(null);
+      return resolve({ parsed: null, raw: '' });
     }
     let body = '';
     req.on('data', (chunk) => body += chunk);
     req.on('end', () => {
-      try { resolve(JSON.parse(body)); }
-      catch { resolve(null); }
+      let parsed;
+      try { parsed = JSON.parse(body); }
+      catch { parsed = null; }
+      resolve({ parsed, raw: body });
     });
   });
 }
@@ -214,7 +218,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // CORS for all API routes
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Content-Type', 'application/json');
@@ -223,7 +227,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     // Parse body for POST/DELETE
-    const body = await parseBody(req);
+    const { parsed: body, raw: rawBody } = await parseBody(req);
 
     // ---- AUTH ROUTES ----
     if (urlPath.startsWith('/api/auth/')) {
@@ -234,6 +238,12 @@ const server = http.createServer(async (req, res) => {
     // ---- FAVORITES ROUTES ----
     if (urlPath.startsWith('/api/favorites')) {
       const handled = await handleFavorites(req, res, urlPath, body);
+      if (handled !== false) return;
+    }
+
+    // ---- BILLING ROUTES ----
+    if (urlPath.startsWith('/api/billing')) {
+      const handled = await handleBilling(req, res, urlPath, body, rawBody);
       if (handled !== false) return;
     }
 
@@ -345,6 +355,114 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200);
         return res.end(JSON.stringify({ photos: [] }));
       }
+    }
+
+    // ---- SOCIAL CONTENT (YouTube + Reddit + Bluesky) ----
+    if (urlPath === '/api/social') {
+      const region = url.searchParams.get('region') || 'world';
+      const cacheKey = `social-${region}`;
+      if (!global.socialCache) global.socialCache = {};
+      const cached = global.socialCache[cacheKey];
+      if (cached && Date.now() - cached.ts < 900000) { // 15 min cache
+        res.writeHead(200);
+        return res.end(JSON.stringify(cached.data));
+      }
+
+      const items = [];
+
+      // SOURCE 1: YouTube (public search, no key needed for RSS)
+      try {
+        const ytQuery = encodeURIComponent(`${region} conflict news 2024 2025`);
+        const ytUrl = `https://www.youtube.com/results?search_query=${ytQuery}&sp=CAI%253D`; // sort by date
+        // Use YouTube RSS feed (no API key needed)
+        const ytRssUrl = `https://www.youtube.com/feeds/videos.xml?search_query=${ytQuery}`;
+        // Fallback: use Google RSS for YouTube results
+        const googleYtUrl = `https://news.google.com/rss/search?q=${ytQuery}+site:youtube.com&hl=en-US`;
+        const { data: rssData } = await fetchUrl(googleYtUrl);
+        if (typeof rssData === 'string' && rssData.includes('<item>')) {
+          const rssItems = rssData.match(/<item>([\s\S]*?)<\/item>/g) || [];
+          for (const item of rssItems.slice(0, 5)) {
+            const title = item.match(/<title>(.*?)<\/title>/)?.[1]?.replace(/<!\[CDATA\[|\]\]>/g, '') || '';
+            const link = item.match(/<link>(.*?)<\/link>/)?.[1] || '';
+            const pubDate = item.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || '';
+            if (title && link) {
+              items.push({
+                id: `yt-${items.length}`,
+                source: 'YouTube',
+                type: 'video',
+                title: title.replace(/ - YouTube$/, ''),
+                author: '',
+                timestamp: pubDate,
+                url: link,
+                thumbnail: '',
+                region,
+                relevance: 0.7,
+              });
+            }
+          }
+        }
+      } catch { /* YouTube fetch failed */ }
+
+      // SOURCE 2: Reddit (public JSON — requires browser-like User-Agent)
+      try {
+        const redditQuery = encodeURIComponent(region);
+        const redditUrl = `https://www.reddit.com/search.json?q=${redditQuery}&sort=new&limit=5&t=week`;
+        const { data: redditData, statusCode } = await fetchUrl(redditUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+        });
+        if (statusCode === 200 && redditData?.data?.children) {
+          for (const child of redditData.data.children.slice(0, 5)) {
+            const post = child.data;
+            if (!post || post.over_18) continue;
+            items.push({
+              id: `reddit-${post.id}`,
+              source: 'Reddit',
+              type: 'post',
+              title: post.title?.substring(0, 120),
+              text: post.selftext?.substring(0, 200),
+              author: post.author,
+              timestamp: new Date(post.created_utc * 1000).toISOString(),
+              url: `https://reddit.com${post.permalink}`,
+              thumbnail: post.thumbnail?.startsWith('http') ? post.thumbnail : '',
+              subreddit: post.subreddit,
+              score: post.score,
+              region,
+              relevance: Math.min(0.9, (post.score || 0) / 1000 + 0.3),
+            });
+          }
+        }
+      } catch { /* Reddit fetch failed */ }
+
+      // SOURCE 3: Bluesky (public search, no auth needed)
+      try {
+        const bskyQuery = encodeURIComponent(region);
+        const bskyUrl = `https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${bskyQuery}&limit=5&sort=latest`;
+        const { data: bskyData, statusCode } = await fetchUrl(bskyUrl);
+        if (statusCode === 200 && bskyData?.posts) {
+          for (const post of bskyData.posts.slice(0, 5)) {
+            items.push({
+              id: `bsky-${post.uri?.split('/').pop()}`,
+              source: 'Bluesky',
+              type: 'post',
+              title: post.record?.text?.substring(0, 120) || '',
+              author: post.author?.displayName || post.author?.handle,
+              timestamp: post.record?.createdAt || '',
+              url: `https://bsky.app/profile/${post.author?.handle}/post/${post.uri?.split('/').pop()}`,
+              thumbnail: '',
+              region,
+              relevance: 0.5,
+            });
+          }
+        }
+      } catch { /* Bluesky fetch failed */ }
+
+      // Sort by relevance
+      items.sort((a, b) => (b.relevance || 0) - (a.relevance || 0));
+
+      const result = { items: items.slice(0, 15), region, sources: ['YouTube', 'Reddit', 'Bluesky'] };
+      global.socialCache[cacheKey] = { data: result, ts: Date.now() };
+      res.writeHead(200);
+      return res.end(JSON.stringify(result));
     }
 
     // ---- STOCK SEARCH (Yahoo Finance autocomplete) ----
@@ -583,22 +701,18 @@ const server = http.createServer(async (req, res) => {
 // SAMPLE CAMERA DATA (when no Windy API key)
 // ============================================
 function generateSampleCameras(bboxStr) {
+  // Sample cameras with real YouTube live stream IDs for embed
   const cameras = [
-    { webcamId: 'cam-001', title: 'Times Square NYC', location: { latitude: 40.758, longitude: -73.9855, city: 'New York', country: 'United States' }, categories: ['city'], status: 'active' },
-    { webcamId: 'cam-002', title: 'Eiffel Tower Paris', location: { latitude: 48.8584, longitude: 2.2945, city: 'Paris', country: 'France' }, categories: ['city', 'landscape'], status: 'active' },
-    { webcamId: 'cam-003', title: 'Tower Bridge London', location: { latitude: 51.5055, longitude: -0.0754, city: 'London', country: 'United Kingdom' }, categories: ['city'], status: 'active' },
-    { webcamId: 'cam-004', title: 'LAX Airport', location: { latitude: 33.9425, longitude: -118.408, city: 'Los Angeles', country: 'United States' }, categories: ['airport'], status: 'active' },
-    { webcamId: 'cam-005', title: 'Port of Rotterdam', location: { latitude: 51.9036, longitude: 4.4860, city: 'Rotterdam', country: 'Netherlands' }, categories: ['harbor', 'port'], status: 'active' },
-    { webcamId: 'cam-006', title: 'Shibuya Crossing Tokyo', location: { latitude: 35.6595, longitude: 139.7004, city: 'Tokyo', country: 'Japan' }, categories: ['city', 'traffic'], status: 'active' },
-    { webcamId: 'cam-007', title: 'Autobahn A1 Hamburg', location: { latitude: 53.5511, longitude: 9.9937, city: 'Hamburg', country: 'Germany' }, categories: ['traffic', 'road'], status: 'active' },
-    { webcamId: 'cam-008', title: 'Dubai Burj Khalifa', location: { latitude: 25.1972, longitude: 55.2744, city: 'Dubai', country: 'United Arab Emirates' }, categories: ['city', 'landscape'], status: 'active' },
-    { webcamId: 'cam-009', title: 'Sydney Harbour', location: { latitude: -33.8568, longitude: 151.2153, city: 'Sydney', country: 'Australia' }, categories: ['harbor', 'city'], status: 'active' },
-    { webcamId: 'cam-010', title: 'Copacabana Beach Rio', location: { latitude: -22.9711, longitude: -43.1826, city: 'Rio de Janeiro', country: 'Brazil' }, categories: ['beach', 'city'], status: 'active' },
-    { webcamId: 'cam-011', title: 'Brandenburg Gate Berlin', location: { latitude: 52.5163, longitude: 13.3777, city: 'Berlin', country: 'Germany' }, categories: ['city'], status: 'active' },
-    { webcamId: 'cam-012', title: 'Colosseum Rome', location: { latitude: 41.8902, longitude: 12.4922, city: 'Rome', country: 'Italy' }, categories: ['city', 'landscape'], status: 'active' },
-    { webcamId: 'cam-013', title: 'Singapore Marina Bay', location: { latitude: 1.2816, longitude: 103.8636, city: 'Singapore', country: 'Singapore' }, categories: ['city', 'harbor'], status: 'active' },
-    { webcamId: 'cam-014', title: 'Istanbul Bosphorus', location: { latitude: 41.0424, longitude: 29.0082, city: 'Istanbul', country: 'Turkey' }, categories: ['harbor', 'city'], status: 'active' },
-    { webcamId: 'cam-015', title: 'I-95 Miami Traffic', location: { latitude: 25.7617, longitude: -80.1918, city: 'Miami', country: 'United States' }, categories: ['traffic', 'road'], status: 'active' },
+    { webcamId: 'cam-001', title: 'Times Square NYC', location: { latitude: 40.758, longitude: -73.9855, city: 'New York', country: 'United States' }, categories: ['city'], status: 'active', urls: { detail: 'https://www.earthcam.com/usa/newyork/timessquare/' }, images: { current: { preview: 'https://images.unsplash.com/photo-1534430480872-3498386e7856?w=400&h=225&fit=crop' } } },
+    { webcamId: 'cam-002', title: 'Eiffel Tower Paris', location: { latitude: 48.8584, longitude: 2.2945, city: 'Paris', country: 'France' }, categories: ['city', 'landscape'], status: 'active', urls: { detail: 'https://www.earthcam.com/world/france/paris/' }, images: { current: { preview: 'https://images.unsplash.com/photo-1543349689-9a4d426bee8e?w=400&h=225&fit=crop' } } },
+    { webcamId: 'cam-003', title: 'Tower Bridge London', location: { latitude: 51.5055, longitude: -0.0754, city: 'London', country: 'United Kingdom' }, categories: ['city'], status: 'active', urls: { detail: 'https://www.earthcam.com/world/england/london/' }, images: { current: { preview: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?w=400&h=225&fit=crop' } } },
+    { webcamId: 'cam-004', title: 'LAX Airport', location: { latitude: 33.9425, longitude: -118.408, city: 'Los Angeles', country: 'United States' }, categories: ['airport'], status: 'active', urls: { detail: 'https://www.flightradar24.com/airport/lax' }, images: { current: { preview: 'https://images.unsplash.com/photo-1436491865332-7a61a109db05?w=400&h=225&fit=crop' } } },
+    { webcamId: 'cam-005', title: 'Port of Rotterdam', location: { latitude: 51.9036, longitude: 4.4860, city: 'Rotterdam', country: 'Netherlands' }, categories: ['harbor', 'port'], status: 'active', urls: { detail: 'https://www.portofrotterdam.com/en/online/webcams' }, images: { current: { preview: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=225&fit=crop' } } },
+    { webcamId: 'cam-006', title: 'Shibuya Crossing Tokyo', location: { latitude: 35.6595, longitude: 139.7004, city: 'Tokyo', country: 'Japan' }, categories: ['city', 'traffic'], status: 'active', urls: { detail: 'https://www.youtube.com/watch?v=_9MKxJQMKfE' }, images: { current: { preview: 'https://images.unsplash.com/photo-1542051841857-5f90071e7989?w=400&h=225&fit=crop' } } },
+    { webcamId: 'cam-007', title: 'Dubai Skyline', location: { latitude: 25.1972, longitude: 55.2744, city: 'Dubai', country: 'United Arab Emirates' }, categories: ['city', 'landscape'], status: 'active', urls: { detail: 'https://www.earthcam.com/world/unitedarabemirates/dubai/' }, images: { current: { preview: 'https://images.unsplash.com/photo-1512453979798-5ea266f8880c?w=400&h=225&fit=crop' } } },
+    { webcamId: 'cam-008', title: 'Sydney Harbour', location: { latitude: -33.8568, longitude: 151.2153, city: 'Sydney', country: 'Australia' }, categories: ['harbor', 'city'], status: 'active', urls: { detail: 'https://www.sydney.com/webcams' }, images: { current: { preview: 'https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?w=400&h=225&fit=crop' } } },
+    { webcamId: 'cam-009', title: 'Istanbul Bosphorus', location: { latitude: 41.0424, longitude: 29.0082, city: 'Istanbul', country: 'Turkey' }, categories: ['harbor', 'city'], status: 'active', urls: { detail: 'https://www.skylinewebcams.com/en/webcam/turkey/istanbul.html' }, images: { current: { preview: 'https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?w=400&h=225&fit=crop' } } },
+    { webcamId: 'cam-010', title: 'Singapore Marina Bay', location: { latitude: 1.2816, longitude: 103.8636, city: 'Singapore', country: 'Singapore' }, categories: ['city', 'harbor'], status: 'active', urls: { detail: 'https://www.skylinewebcams.com/en/webcam/singapore.html' }, images: { current: { preview: 'https://images.unsplash.com/photo-1525625293386-3f8f99389edd?w=400&h=225&fit=crop' } } },
   ];
 
   if (!bboxStr) return cameras;

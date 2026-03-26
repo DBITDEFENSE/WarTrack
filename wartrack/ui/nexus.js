@@ -74,10 +74,25 @@ async function submitQuery() {
   const loadingId = addNexusMessage('Analyzing...', null, true);
 
   try {
+    // Gather live intelligence context from correlation engine
+    let liveContext = null;
+    try {
+      const summary = window._getGlobalIntelSummary?.() || [];
+      const regionIntel = window._getRegionIntel?.();
+      liveContext = {
+        globalSummary: summary.slice(0, 5), // top 5 threat regions
+        totalFlights: document.getElementById('count-flights')?.textContent || '0',
+        totalMilitary: document.getElementById('count-military')?.textContent || '0',
+        totalVessels: document.getElementById('count-vessels')?.textContent || '0',
+        jammingCells: document.getElementById('count-jamming')?.textContent || '0',
+        satellites: document.getElementById('count-satellites')?.textContent || '0',
+      };
+    } catch { /* correlation not ready */ }
+
     const resp = await fetch('/api/nexus', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query })
+      body: JSON.stringify({ query, liveContext })
     });
 
     const data = await resp.json();

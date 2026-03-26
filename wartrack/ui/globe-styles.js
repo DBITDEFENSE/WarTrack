@@ -56,7 +56,7 @@ const GLOBE_STYLES = {
   },
 };
 
-let currentStyle = 'dark-tactical';
+let currentStyle = 'satellite';
 let viewer = null;
 
 export function initGlobeStyles(v) {

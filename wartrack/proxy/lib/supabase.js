@@ -4,7 +4,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://rejsenubjifjuxuolvug.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 
 export const supabaseConfigured = !!SUPABASE_URL && SUPABASE_URL.includes('supabase.co');

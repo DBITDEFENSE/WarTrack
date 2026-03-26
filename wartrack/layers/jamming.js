@@ -16,10 +16,10 @@ let jammingStats = { totalCells: 0, highCells: 0, moderateCells: 0 };
 
 // Color scale for hex cells
 const HEX_COLORS = {
-  normal:   { fill: '#00ff8840', outline: '#00ff8880', label: 'NORMAL' },
-  low:      { fill: '#ffdd4450', outline: '#ffdd4490', label: 'LOW' },
-  moderate: { fill: '#ffaa0060', outline: '#ffaa00a0', label: 'MODERATE' },
-  high:     { fill: '#ff334470', outline: '#ff3344b0', label: 'HIGH' },
+  normal:   { fill: '#00ff8860', outline: '#00ff88cc', label: 'NORMAL' },
+  low:      { fill: '#ffdd4470', outline: '#ffdd44cc', label: 'LOW' },
+  moderate: { fill: '#ffaa0088', outline: '#ffaa00dd', label: 'MODERATE' },
+  high:     { fill: '#ff3344aa', outline: '#ff3344ee', label: 'HIGH' },
 };
 
 // ============================================
@@ -261,7 +261,7 @@ function renderHexCells(cells, viewer) {
             outline: true,
             outlineColor: Cesium.Color.fromCssColorString(colors.outline),
             outlineWidth: 1,
-            height: 100, // slightly above surface to avoid z-fighting with globe
+            height: 500, // above surface for visibility + avoid z-fighting
           }
         });
         entity.hexData = cellData;

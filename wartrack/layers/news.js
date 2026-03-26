@@ -6,6 +6,7 @@
 import { NEWS_CACHE_TTL, NEWS_MAX_ARTICLES, NEWS_FETCH_DELAY } from '../config.js';
 
 const NEWS_CACHE = {};
+window._newsCacheRef = NEWS_CACHE; // expose for correlator
 let dataSource = null;
 
 // State-adjacent outlets that get a warning indicator

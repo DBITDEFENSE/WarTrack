@@ -6,6 +6,7 @@
 import { fetchNewsForHotspot, getCacheAge, timeAgo, severityColor } from '../layers/news.js';
 import { openFeedForHotspot } from './news-feed.js';
 import { renderSaveButton, bindSaveButtons } from './favorites.js';
+import { renderGroundViewButton, bindGroundViewButtons } from './ground-view.js';
 
 let panelEl, bodyEl, titleEl, closeBtn;
 let activeViewer = null;
@@ -100,6 +101,8 @@ export function initDetailPanel(viewer) {
         showPlanetDetail(entity);
       } else if (entity.entityType === 'jammingCell') {
         showJammingCellDetail(entity);
+      } else if (entity.entityType === 'social-content') {
+        showSocialContentDetail(entity);
       }
     }
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
@@ -172,10 +175,12 @@ function showFlightDetail(entity) {
     <div id="flight-insight-container"></div>
 
     ${renderSaveButton('flight', ac.icao24, { callsign: ac.callsign, name: ac.callsign, subtitle: isMil ? 'MILITARY' : 'CIVILIAN' })}
+    ${ac.latitude && ac.longitude ? renderGroundViewButton(ac.latitude, ac.longitude, ac.callsign) : ''}
   `;
 
   panelEl.classList.remove('hidden');
   bindSaveButtons(bodyEl);
+  bindGroundViewButtons(bodyEl);
 
   // Lazy-load AI insight
   loadEntityInsight('flight-insight-container', 'flight', {
@@ -218,10 +223,12 @@ function showVesselDetail(entity) {
     <div id="vessel-insight-container"></div>
 
     ${renderSaveButton('vessel', v.mmsi || v.name, { name: v.name || 'Unknown', subtitle: cls?.label || 'VESSEL' })}
+    ${v.lat && v.lon ? renderGroundViewButton(v.lat, v.lon, v.name || 'Vessel') : ''}
   `;
 
   panelEl.classList.remove('hidden');
   bindSaveButtons(bodyEl);
+  bindGroundViewButtons(bodyEl);
 
   loadEntityInsight('vessel-insight-container', 'vessel', {
     id: v.mmsi, name: v.name, flag: v.flag, destination: v.destination,
@@ -297,11 +304,13 @@ function renderInfoTab(hs, sColor) {
     </div>
 
     ${renderSaveButton('hotspot', hs.name, { name: hs.name, subtitle: hs.severity.toUpperCase() + ' SEVERITY' })}
+    ${renderGroundViewButton(hs.lat, hs.lon, hs.name, { severity: hs.severity })}
 
     <button class="detail-btn-newsfeed" id="btn-open-feed">VIEW ALL NEWS FOR THIS REGION →</button>
   `;
 
   bindSaveButtons(container);
+  bindGroundViewButtons(container);
   document.getElementById('btn-open-feed')?.addEventListener('click', () => {
     openFeedForHotspot(hs);
   });
@@ -553,6 +562,52 @@ function showJammingCellDetail(entity) {
       <div class="detail-section-title" style="color:#667">⚠ DISCLAIMER</div>
       <div style="color:#556;font-size:10px;line-height:1.5">
         This is an inferred assessment based on ADS-B telemetry anomalies (altitude divergence, position jumps). It does not confirm active GPS jamming. Multiple factors can cause similar signatures.
+      </div>
+    </div>
+  `;
+
+  panelEl.classList.remove('hidden');
+}
+
+// ============================================
+// SOCIAL CONTENT DETAIL
+// ============================================
+function showSocialContentDetail(entity) {
+  const item = entity.contentData;
+  if (!item) return;
+
+  titleEl.textContent = '◈ SOCIAL CONTENT';
+
+  const typeIcons = { video: '▶', post: '✦', camera: '◉', article: '◈' };
+  const typeColors = { video: '#ff4444', post: '#3399ff', camera: '#00cc88', article: '#ffaa00' };
+  const color = typeColors[item.type] || '#ffaa00';
+  const icon = typeIcons[item.type] || '◈';
+
+  bodyEl.innerHTML = `
+    <div class="detail-callsign" style="color:${color};font-size:18px">${icon} ${escapeHtml(truncate(item.title || 'Untitled', 60))}</div>
+    <div class="detail-badges">
+      <span class="detail-type-badge" style="background:${color}22;border:1px solid ${color}66;color:${color}">${item.source?.toUpperCase()}</span>
+      <span class="detail-type-badge icon-badge">${item.type?.toUpperCase()}</span>
+    </div>
+
+    <div class="detail-section">
+      <div class="detail-section-title">CONTENT</div>
+      ${item.author ? `<div class="detail-row"><span class="detail-key">AUTHOR</span><span class="detail-val">${escapeHtml(item.author)}</span></div>` : ''}
+      ${item.subreddit ? `<div class="detail-row"><span class="detail-key">SUBREDDIT</span><span class="detail-val">r/${escapeHtml(item.subreddit)}</span></div>` : ''}
+      ${item.timestamp ? `<div class="detail-row"><span class="detail-key">POSTED</span><span class="detail-val">${timeAgo(item.timestamp)}</span></div>` : ''}
+      ${item.score ? `<div class="detail-row"><span class="detail-key">SCORE</span><span class="detail-val">${item.score}</span></div>` : ''}
+      <div class="detail-row"><span class="detail-key">REGION</span><span class="detail-val">${escapeHtml(item.region || entity.contentRegion || '--')}</span></div>
+    </div>
+
+    ${item.text ? `<div class="detail-section"><div style="color:#99aabb;font-size:11px;line-height:1.5">${escapeHtml(truncate(item.text, 200))}</div></div>` : ''}
+
+    ${item.thumbnail ? `<div style="margin:8px 0"><img src="${item.thumbnail}" style="width:100%;border-radius:4px;border:1px solid rgba(0,255,136,0.15)" onerror="this.style.display='none'" /></div>` : ''}
+
+    <a href="${item.url}" target="_blank" rel="noopener" style="display:block;width:100%;padding:8px;text-align:center;background:${color}15;border:1px solid ${color}44;color:${color};font-family:var(--font-mono);font-size:11px;letter-spacing:2px;text-decoration:none;border-radius:3px;margin-top:8px">OPEN SOURCE →</a>
+
+    <div class="detail-section" style="margin-top:12px">
+      <div style="color:#445;font-size:9px;line-height:1.4">
+        ⚠ Public content — unverified. Source: ${escapeHtml(item.source || 'Unknown')}. WarTrack does not endorse or verify social content accuracy.
       </div>
     </div>
   `;

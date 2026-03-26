@@ -27,6 +27,10 @@ import { initTimeline, showTimeline } from './ui/timeline.js';
 import { isReplayMode } from './data/snapshot-store.js';
 import { initCameras, setCamerasVisible } from './layers/cameras.js';
 import { initSolarSystem, setSolarSystemVisible, flyToPlanet, flyToEarth } from './layers/solarsystem.js';
+import { runCorrelation, getRegionIntel, getGlobalIntelSummary } from './layers/correlator.js';
+import { initSocial, setSocialVisible, loadContentForVisibleRegions } from './layers/social.js';
+import { initSettings } from './ui/settings.js';
+import { initGroundView } from './ui/ground-view.js';
 
 // Cesium Ion token — free tier
 Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI0YWMxMWEyMi01Y2QzLTRkNjQtOGZiZi0yNjA1M2I5MmMwYjMiLCJpZCI6MjY1MTM4LCJpYXQiOjE3MzUzMjUxNTJ9.r0OHLB0jVaFEuyOJMhGsG-KBoyXQFMCMBiPBNn9xdYo';
@@ -57,19 +61,18 @@ const viewer = new Cesium.Viewer('cesiumContainer', {
   }
 });
 
-// Use free tile imagery — no token needed
-// Base layer: dark CartoDB WITHOUT labels (so we can control label brightness separately)
+// Default globe style: Satellite imagery
 const darkBase = new Cesium.UrlTemplateImageryProvider({
-  url: 'https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
-  credit: 'CartoDB',
+  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  credit: 'ArcGIS World Imagery',
   maximumLevel: 18,
 });
 const baseLayer = viewer.imageryLayers.addImageryProvider(darkBase);
-baseLayer.brightness = 0.7;
-baseLayer.contrast = 1.2;
-baseLayer.saturation = 0.4;
+baseLayer.brightness = 0.85;
+baseLayer.contrast = 1.1;
+baseLayer.saturation = 0.8;
 
-// Label layer: country names, city names, borders — stays bright even in thermal
+// Label layer: country names, city names, borders
 const labelTiles = new Cesium.UrlTemplateImageryProvider({
   url: 'https://basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png',
   credit: 'CartoDB Labels',
@@ -78,7 +81,7 @@ const labelTiles = new Cesium.UrlTemplateImageryProvider({
 const labelLayer = viewer.imageryLayers.addImageryProvider(labelTiles);
 labelLayer.brightness = 1.0;
 labelLayer.contrast = 1.0;
-labelLayer.saturation = 0.0; // desaturated labels — clean white text
+labelLayer.saturation = 0.0;
 
 // Export layers so thermal.js can adjust them independently
 window._baseTileLayer = baseLayer;
@@ -86,7 +89,7 @@ window._labelTileLayer = labelLayer;
 
 // Globe and atmosphere — solid globe with proper depth occlusion
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
-viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#0a1018');
+viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#0a1220');
 viewer.scene.globe.showGroundAtmosphere = true;
 viewer.scene.globe.enableLighting = false;
 viewer.scene.fog.enabled = false;
@@ -99,9 +102,9 @@ viewer.scene.globe.translucency.enabled = false;
 
 // Atmosphere ring around globe edge
 viewer.scene.skyAtmosphere = new Cesium.SkyAtmosphere();
-viewer.scene.skyAtmosphere.brightnessShift = -0.3;
-viewer.scene.skyAtmosphere.saturationShift = -0.7;
-viewer.scene.skyAtmosphere.hueShift = 0.4; // push toward green/cyan tint
+viewer.scene.skyAtmosphere.brightnessShift = -0.15;
+viewer.scene.skyAtmosphere.saturationShift = -0.3;
+viewer.scene.skyAtmosphere.hueShift = 0.1;
 
 // Performance: enable request render mode — only re-render when something changes
 viewer.scene.requestRenderMode = true;
@@ -149,8 +152,22 @@ export function updateStats() {
   const altEl = document.getElementById('stat-altitude');
 
   const total = appState.flightCount + appState.vesselCount + appState.satelliteCount;
-  totalEl.textContent = total.toLocaleString();
-  milEl.textContent = appState.militaryCount.toLocaleString();
+  if (totalEl) totalEl.textContent = total.toLocaleString();
+  if (milEl) milEl.textContent = appState.militaryCount.toLocaleString();
+
+  // Global threat level from correlation engine
+  const threatEl = document.getElementById('stat-threat');
+  if (threatEl) {
+    try {
+      const summary = getGlobalIntelSummary();
+      if (summary.length > 0) {
+        const topThreat = summary[0]; // highest score region
+        const level = topThreat.threatLevel;
+        threatEl.textContent = level;
+        threatEl.className = `stat-value threat-badge ${level.toLowerCase()}`;
+      }
+    } catch { /* correlator not ready */ }
+  }
 
   const satEl = document.getElementById('stat-satellites');
   if (satEl) satEl.textContent = appState.satelliteCount.toLocaleString();
@@ -201,7 +218,8 @@ async function init() {
       onSatellitesToggle: setSatellitesVisible,
       onCoverageToggle: setCoverageVisible,
       onCamerasToggle: setCamerasVisible,
-      onJammingToggle: (v) => { setJammingVisible(v); if (v) showTimeline(); },
+      onSocialToggle: (v) => { setSocialVisible(v); if (v) loadContentForVisibleRegions(viewer); },
+      onJammingToggle: (v) => { setJammingVisible(v); if (v) { updateJamming(viewer); showTimeline(); } },
       onSolarSystemToggle: (v) => {
         setSolarSystemVisible(v);
         const nav = document.getElementById('planet-nav');
@@ -209,8 +227,8 @@ async function init() {
       },
     });
 
-    // Init layers
-    initFlights(viewer);
+    // Init layers (await async ones that load data before rendering)
+    await initFlights(viewer);
     initVessels(viewer);
     initHotspots(viewer);
     initThermal(viewer);
@@ -231,6 +249,9 @@ async function init() {
     // Init globe style picker
     initGlobeStyles(viewer);
 
+    // Init social content layer
+    initSocial(viewer);
+
     // Init GPS jamming / interference layer
     initJamming(viewer);
 
@@ -250,6 +271,19 @@ async function init() {
           flyToPlanet(viewer, planet);
         }
       });
+    });
+
+    // Init settings + ground view
+    initSettings();
+    initGroundView();
+
+    // Listen for settings changes to apply maxAircraft + refreshRate dynamically
+    window.addEventListener('wartrack-settings-changed', (e) => {
+      const s = e.detail;
+      // Max aircraft is read by flights.js on next update cycle
+      if (s.maxAircraft) {
+        window._wartracMaxCivilian = parseInt(s.maxAircraft) || 1500;
+      }
     });
 
     // Init auth, favorites, market, cinematic, alerts
@@ -291,12 +325,22 @@ async function init() {
       } catch { /* ignore */ }
     }, 30 * 60 * 1000);
 
-    // Event detection — snapshot after each data refresh
+    // Correlation engine — runs every 15 seconds, fuses all layer data
+    setInterval(() => {
+      if (!isReplayMode()) runCorrelation(viewer);
+    }, 15000);
+    // First correlation after data loads
+    setTimeout(() => runCorrelation(viewer), 5000);
+
+    // Expose correlator for Nexus
+    window._getGlobalIntelSummary = getGlobalIntelSummary;
+    window._getRegionIntel = getRegionIntel;
+
+    // Event detection + position snapshots — every 60 seconds
     setInterval(() => {
       const flightDS = viewer.dataSources.getByName('flights')[0];
       const vesselDS = viewer.dataSources.getByName('vessels')[0];
       if (flightDS && vesselDS) {
-        // Build entity maps from datasources
         const flightMap = new Map();
         const vesselMap = new Map();
         for (const e of flightDS.entities.values) {
@@ -306,6 +350,23 @@ async function init() {
           if (e.vesselData) vesselMap.set(e.vesselData.mmsi || e.id, e);
         }
         takeSnapshot(flightMap, vesselMap);
+
+        // Also store entity positions for replay
+        const positionSnapshot = {
+          timestamp: Date.now(),
+          flights: [],
+          vessels: [],
+        };
+        for (const [id, e] of flightMap) {
+          const ac = e.acData;
+          if (ac) positionSnapshot.flights.push({ icao24: ac.icao24, lat: ac.latitude, lon: ac.longitude, alt: ac.altitude, heading: ac.heading, isMil: ac.isMilitary, callsign: ac.callsign });
+        }
+        for (const [id, e] of vesselMap) {
+          const v = e.vesselData;
+          if (v) positionSnapshot.vessels.push({ mmsi: v.mmsi, lat: v.lat, lon: v.lon, name: v.name, heading: v.heading });
+        }
+        // Store in snapshot-store for replay
+        pushSnapshot(positionSnapshot);
       }
     }, 60000);
 
@@ -332,12 +393,19 @@ async function init() {
     // Briefing re-open button
     document.getElementById('btn-briefing')?.addEventListener('click', showBriefing);
 
-    // Collapsible HUD sections
-    document.getElementById('intel-section-toggle')?.addEventListener('click', () => {
-      const toggle = document.getElementById('intel-section-toggle');
-      const body = document.getElementById('intel-section');
-      toggle.classList.toggle('collapsed');
-      body.classList.toggle('collapsed');
+    // Collapsible HUD sections — all section titles toggle their body
+    document.querySelectorAll('.hud-section-title[data-section]').forEach(title => {
+      title.addEventListener('click', () => {
+        const sectionId = title.dataset.section;
+        const body = document.getElementById(`section-${sectionId}`);
+        if (body) {
+          title.classList.toggle('collapsed');
+          body.classList.toggle('collapsed');
+          // Update arrow
+          const arrow = title.querySelector('.section-arrow');
+          if (arrow) arrow.textContent = title.classList.contains('collapsed') ? '▸' : '▾';
+        }
+      });
     });
 
     // Reset view button — returns globe to default position without affecting layers

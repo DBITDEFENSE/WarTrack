@@ -4,6 +4,20 @@
 // ============================================
 
 let dataSource = null;
+let hotspotIconScale = 1.0;
+
+// Listen for icon resize events
+window.addEventListener('wartrack-icon-resize', (e) => {
+  if (e.detail.layer !== 'hotspots' || !dataSource) return;
+  hotspotIconScale = e.detail.scale;
+  for (const entity of dataSource.entities.values) {
+    if (entity.billboard) {
+      entity.billboard.width = 48 * hotspotIconScale;
+      entity.billboard.height = 48 * hotspotIconScale;
+    }
+  }
+  window.viewer?.scene?.requestRender();
+});
 
 const hotspots = [
   { name: "Ukraine Front", lat: 48.5, lon: 31.2, severity: "high", summary: "Active conflict, eastern front", searchQuery: "Ukraine war Russia" },
