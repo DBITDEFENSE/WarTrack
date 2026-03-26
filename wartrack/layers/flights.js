@@ -4,8 +4,8 @@
 // ============================================
 
 import { appState, updateStats } from '../main.js';
-import { getAircraftIcon, getThermalIcon, AIRCRAFT_COLORS } from '../data/icons.js';
-import { classifyIconType, resolveNation } from '../data/classify.js';
+import { getAircraftIcon, getThermalIcon, AIRCRAFT_COLORS, resolveIconClass } from '../data/icons.js';
+import { resolveNation } from '../data/classify.js';
 import { apiUrl } from '../config.js';
 
 let flightEntities = new Map();
@@ -22,6 +22,12 @@ let ICON_THERMAL = null;
 function getMaxCivilian() { return window._wartracMaxCivilian || 1500; }
 const MAX_TRAIL_POINTS = 15;
 let iconScale = 1.0;
+let globalMode = false;
+
+// Global flights toggle
+document.getElementById('toggle-global-flights')?.addEventListener('change', (e) => {
+  globalMode = e.target.checked;
+});
 
 // Listen for icon resize events
 window.addEventListener('wartrack-icon-resize', (e) => {
@@ -84,6 +90,10 @@ function classifyAircraft(state) {
             || null;
   }
 
+  // ICAO type code from ADSB-X (index 15) and size category (index 16)
+  const typeCode = state[15] || null;
+  const sizeCategory = state[16] || null;
+
   const ac = {
     icao24,
     callsign: callsign || 'UNKNOWN',
@@ -92,18 +102,20 @@ function classifyAircraft(state) {
     longitude: state[5],
     latitude: state[6],
     altitude: state[7] || state[13] || 0,
-    baroAlt: state[7],     // barometric altitude (meters)
-    geoAlt: state[13],     // geometric/GPS altitude (meters)
+    baroAlt: state[7],
+    geoAlt: state[13],
     velocity: state[9] || 0,
     heading: state[10] || 0,
     verticalRate: state[11] || 0,
     onGround: state[8],
     squawk: state[14] || '--',
+    typeCode,
+    sizeCategory,
     typeInfo
   };
 
-  // Resolve icon class and nation
-  ac.iconClass = classifyIconType(ac, aircraftTypes);
+  // Resolve icon class: use ICAO type code first, then category, then heuristics
+  ac.iconClass = resolveIconClass(typeCode, sizeCategory, isMil);
   ac.nation = resolveNation(ac);
 
   return ac;
@@ -226,12 +238,28 @@ async function fetchRegion(bbox) {
 export async function updateFlights(viewer) {
   if (!dataSource) return;
   try {
-    // Collect states from multiple regions
     let allStates = [];
 
-    // On first load or when zoomed out, fetch hotspot regions
+    // GLOBAL MODE — fetch everything from all regions worldwide
+    if (globalMode) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 20000);
+        const resp = await fetch(apiUrl('/api/flights?global=1'), { signal: controller.signal });
+        clearTimeout(timeout);
+        if (resp.ok) {
+          const data = await resp.json();
+          allStates = data?.states || [];
+        }
+      } catch { /* timeout */ }
+      if (allStates.length > 0) {
+        processStates(viewer, allStates, true);
+        return;
+      }
+    }
+
+    // VIEWPORT MODE — fetch hotspot regions first, then viewport
     if (flightEntities.size === 0) {
-      // Fetch first 3 hotspot regions in parallel for fast initial load
       const initialBatch = HOTSPOT_BBOXES.slice(0, 3);
       const results = await Promise.all(initialBatch.map(fetchRegion));
       for (const states of results) allStates.push(...states);

@@ -132,19 +132,21 @@ const FLIGHTS_CACHE_TTL = 30000;
 
 function adsbxToOpenSkyState(ac) {
   return [
-    (ac.hex || '').toLowerCase(),
-    (ac.flight || '').trim(),
-    ac.r || '',
-    null, null,
-    ac.lon, ac.lat,
-    ac.alt_baro === 'ground' ? 0 : (ac.alt_baro ? ac.alt_baro * 0.3048 : null),
-    ac.alt_baro === 'ground',
-    ac.gs ? ac.gs * 0.5144 : null,
-    ac.track,
-    ac.baro_rate ? ac.baro_rate * 0.00508 : null,
-    null,
-    ac.alt_geom ? ac.alt_geom * 0.3048 : null,
-    ac.squawk,
+    (ac.hex || '').toLowerCase(),       // 0: icao24
+    (ac.flight || '').trim(),           // 1: callsign
+    ac.r || '',                         // 2: registration/origin
+    null, null,                         // 3,4: timestamps
+    ac.lon, ac.lat,                     // 5,6: position
+    ac.alt_baro === 'ground' ? 0 : (ac.alt_baro ? ac.alt_baro * 0.3048 : null), // 7: baro alt
+    ac.alt_baro === 'ground',           // 8: on_ground
+    ac.gs ? ac.gs * 0.5144 : null,     // 9: velocity m/s
+    ac.track,                           // 10: heading
+    ac.baro_rate ? ac.baro_rate * 0.00508 : null, // 11: vert rate
+    null,                               // 12: sensors
+    ac.alt_geom ? ac.alt_geom * 0.3048 : null, // 13: geo alt
+    ac.squawk,                          // 14: squawk
+    ac.t || null,                       // 15: ICAO type code (B738, A320, F16, etc.)
+    ac.category || null,                // 16: size category (A1-A5, B1-B7, C1-C3)
   ];
 }
 
@@ -235,6 +237,101 @@ async function fetchFlightsForBbox(lamin, lamax, lomin, lomax) {
       const oldest = flightsRegionCache.keys().next().value;
       flightsRegionCache.delete(oldest);
     }
+  }
+
+  return { data: result, cached: false, sources };
+}
+
+// ============================================
+// GLOBAL FLIGHTS — OpenSky all + ADSB-X multi-region
+// ============================================
+let globalFlightsCache = { data: null, timestamp: 0 };
+const GLOBAL_CACHE_TTL = 45000; // 45 seconds
+
+const GLOBAL_ADSBX_REGIONS = [
+  { lat: 51, lon: 5, dist: 250 },     // W Europe
+  { lat: 48, lon: 20, dist: 250 },    // E Europe
+  { lat: 40, lon: -75, dist: 250 },   // US East
+  { lat: 35, lon: -100, dist: 250 },  // US Central
+  { lat: 37, lon: -122, dist: 250 },  // US West
+  { lat: 25, lon: 55, dist: 250 },    // Middle East
+  { lat: 35, lon: 135, dist: 250 },   // Japan/Korea
+  { lat: 22, lon: 114, dist: 250 },   // SE Asia
+  { lat: -33, lon: 151, dist: 250 },  // Australia
+  { lat: 55, lon: 37, dist: 250 },    // Russia/Moscow
+];
+
+async function fetchGlobalFlights() {
+  const now = Date.now();
+  if (globalFlightsCache.data && (now - globalFlightsCache.timestamp) < GLOBAL_CACHE_TTL) {
+    return { data: globalFlightsCache.data, cached: true, sources: ['cache'] };
+  }
+
+  const sources = [];
+  const aircraftMap = new Map();
+
+  // OpenSky global (8s timeout)
+  const osPromise = (async () => {
+    try {
+      const token = await getOpenSkyToken();
+      const headers = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const { data, statusCode } = await fetchWithTimeout(
+        'https://opensky-network.org/api/states/all', { headers }, 8000
+      );
+      if (statusCode === 200 && data?.states) return data.states;
+    } catch {}
+    return [];
+  })();
+
+  // ADSB-X regions in parallel batches of 3 (stay within rate limits)
+  const adsbxPromise = (async () => {
+    if (!ADSBX_API_KEY) return [];
+    const allAc = [];
+    for (let i = 0; i < GLOBAL_ADSBX_REGIONS.length; i += 3) {
+      const batch = GLOBAL_ADSBX_REGIONS.slice(i, i + 3);
+      const results = await Promise.all(batch.map(async r => {
+        try {
+          const { data, statusCode } = await fetchWithTimeout(
+            `https://adsbexchange-com1.p.rapidapi.com/v2/lat/${r.lat}/lon/${r.lon}/dist/${r.dist}/`,
+            { headers: { 'X-RapidAPI-Key': ADSBX_API_KEY, 'X-RapidAPI-Host': 'adsbexchange-com1.p.rapidapi.com' } },
+            8000
+          );
+          if (statusCode === 200 && data?.ac) return data.ac;
+        } catch {}
+        return [];
+      }));
+      for (const acs of results) allAc.push(...acs);
+    }
+    return allAc;
+  })();
+
+  const [osStates, adsbxAcs] = await Promise.all([osPromise, adsbxPromise]);
+
+  if (osStates.length > 0) {
+    sources.push('opensky');
+    for (const s of osStates) {
+      const icao = (s[0] || '').toLowerCase();
+      if (icao && s[5] && s[6]) aircraftMap.set(icao, s);
+    }
+  }
+
+  if (adsbxAcs.length > 0) {
+    sources.push('adsbx');
+    for (const ac of adsbxAcs) {
+      const state = adsbxToOpenSkyState(ac);
+      const icao = state[0];
+      if (icao && state[5] && state[6] && !aircraftMap.has(icao)) {
+        aircraftMap.set(icao, state);
+      }
+    }
+  }
+
+  const states = Array.from(aircraftMap.values());
+  const result = { time: Math.floor(now / 1000), states: states.length > 0 ? states : null, sources, count: states.length };
+
+  if (states.length > 0) {
+    globalFlightsCache = { data: result, timestamp: now };
   }
 
   return { data: result, cached: false, sources };
@@ -381,6 +478,15 @@ const server = http.createServer(async (req, res) => {
 
     // ---- MERGED FLIGHTS (OpenSky + ADSB-X, bbox-based, deduplicated) ----
     if (urlPath === '/api/flights') {
+      const global = url.searchParams.get('global') === '1';
+      if (global) {
+        // Global mode: fetch OpenSky all + multiple ADSB-X regions
+        const result = await fetchGlobalFlights();
+        res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
+        res.setHeader('X-Sources', (result.sources || []).join(','));
+        res.writeHead(200);
+        return res.end(JSON.stringify(result.data));
+      }
       const lamin = url.searchParams.get('lamin') || '-90';
       const lamax = url.searchParams.get('lamax') || '90';
       const lomin = url.searchParams.get('lomin') || '-180';
