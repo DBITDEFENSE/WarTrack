@@ -6,6 +6,7 @@
 
 import { appState, updateStats } from '../main.js';
 import { pushSnapshot } from '../data/snapshot-store.js';
+import { apiUrl } from '../config.js';
 
 let dataSource = null;
 let hexEntities = new Map();
@@ -32,7 +33,7 @@ export async function initJamming(viewer) {
 
   // Check if ADSB-X is available
   try {
-    const resp = await fetch('/api/adsbx/status');
+    const resp = await fetch(apiUrl('/api/adsbx/status'));
     const data = await resp.json();
     if (data.available) {
       dataSourceMode = 'adsbx';
@@ -307,7 +308,7 @@ export async function updateJamming(viewer) {
 
   // ADSB-X mode: fetch quality data directly
   try {
-    const resp = await fetch('/api/adsbx');
+    const resp = await fetch(apiUrl('/api/adsbx'));
     const data = await resp.json();
     if (!data.aircraft || !data.available) return;
 

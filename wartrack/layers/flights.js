@@ -6,6 +6,7 @@
 import { appState, updateStats } from '../main.js';
 import { getAircraftIcon, getThermalIcon, AIRCRAFT_COLORS } from '../data/icons.js';
 import { classifyIconType, resolveNation } from '../data/classify.js';
+import { apiUrl } from '../config.js';
 
 let flightEntities = new Map();
 let flightTrails = new Map();
@@ -158,7 +159,7 @@ export async function updateFlights(viewer) {
   try {
     let data;
     try {
-      const resp = await fetch('/api/opensky');
+      const resp = await fetch(apiUrl('/api/opensky'));
       if (resp.ok) data = await resp.json();
     } catch { /* ignore */ }
 

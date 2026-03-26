@@ -3,6 +3,7 @@
 // ============================================
 
 import { appState, updateStats } from '../main.js';
+import { apiUrl } from '../config.js';
 
 let vesselEntities = new Map();
 let dataSource = null;
@@ -76,7 +77,7 @@ export async function updateVessels(viewer) {
   try {
     let vessels = [];
     try {
-      const resp = await fetch(`/api/vessels`);
+      const resp = await fetch(apiUrl(`/api/vessels`));
       vessels = await resp.json();
     } catch {
       // ignored

@@ -4,6 +4,7 @@
 // ============================================
 
 import { appState } from '../main.js';
+import { apiUrl } from '../config.js';
 
 let dataSource = null;
 let cameraEntities = new Map();
@@ -122,7 +123,7 @@ async function fetchCamerasForView(viewer) {
   setTimeout(() => { fetchCooldown = false; }, 3000); // 3s cooldown between fetches
 
   try {
-    const resp = await fetch(`/api/cameras?bbox=${north},${east},${south},${west}`);
+    const resp = await fetch(apiUrl(`/api/cameras?bbox=${north},${east},${south},${west}`));
     if (!resp.ok) return;
     const data = await resp.json();
 

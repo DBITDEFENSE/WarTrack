@@ -3,6 +3,7 @@
 // ============================================
 
 import { isAuthenticated, getAuthHeaders } from './auth.js';
+import { apiUrl } from '../config.js';
 
 let favorites = [];
 let panelEl, bodyEl;
@@ -55,7 +56,7 @@ async function loadFavorites() {
   }
 
   try {
-    const resp = await fetch('/api/favorites', { headers: getAuthHeaders() });
+    const resp = await fetch(apiUrl('/api/favorites'), { headers: getAuthHeaders() });
     if (resp.ok) {
       const data = await resp.json();
       favorites = data.favorites || [];
@@ -68,7 +69,7 @@ export async function addFavorite(entityType, entityId, metadata) {
   if (!isAuthenticated()) return null;
 
   try {
-    const resp = await fetch('/api/favorites', {
+    const resp = await fetch(apiUrl('/api/favorites'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ entity_type: entityType, entity_id: entityId, metadata })
@@ -87,7 +88,7 @@ export async function removeFavorite(favoriteId) {
   if (!isAuthenticated()) return;
 
   try {
-    const resp = await fetch(`/api/favorites/${favoriteId}`, {
+    const resp = await fetch(apiUrl(`/api/favorites/${favoriteId}`), {
       method: 'DELETE',
       headers: getAuthHeaders()
     });

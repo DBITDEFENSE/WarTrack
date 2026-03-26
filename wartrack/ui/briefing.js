@@ -4,6 +4,7 @@
 
 import { fetchAllNews } from '../layers/news.js';
 import { getHotspots } from '../layers/hotspots.js';
+import { apiUrl } from '../config.js';
 
 let briefingData = null;
 let panelEl = null;
@@ -69,7 +70,7 @@ async function generateBriefing() {
     const articles = await fetchAllNews(hotspots);
 
     // Send to Claude API for summary
-    const resp = await fetch('/api/summary', {
+    const resp = await fetch(apiUrl('/api/summary'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ articles: articles.slice(0, 15) })
@@ -174,7 +175,7 @@ async function playAudioBriefing() {
 
   try {
     const text = `${briefingData.briefing} ${briefingData.closingRemark || ''}`;
-    const resp = await fetch('/api/tts', {
+    const resp = await fetch(apiUrl('/api/tts'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text })

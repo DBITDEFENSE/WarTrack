@@ -6,6 +6,7 @@
 
 import { appState } from '../main.js';
 import { getHotspots } from './hotspots.js';
+import { apiUrl } from '../config.js';
 
 let dataSource = null;
 let contentCache = new Map();
@@ -78,7 +79,7 @@ export async function fetchContentForRegion(regionName, lat, lon) {
   }
 
   try {
-    const resp = await fetch(`/api/social?region=${encodeURIComponent(regionName)}&lat=${lat}&lon=${lon}`);
+    const resp = await fetch(apiUrl(`/api/social?region=${encodeURIComponent(regionName)}&lat=${lat}&lon=${lon}`));
     if (!resp.ok) return [];
     const data = await resp.json();
     const items = data.items || [];

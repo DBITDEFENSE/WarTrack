@@ -4,6 +4,7 @@
 
 import { STOCKS, CATEGORIES, STOCK_MAP } from '../data/market-universe.js';
 import { renderSaveButton, bindSaveButtons } from './favorites.js';
+import { apiUrl } from '../config.js';
 
 let panelEl, bodyEl, headerControlsEl;
 let allQuotes = [];
@@ -74,7 +75,7 @@ async function loadMarketData(forceRefresh = false) {
     for (let i = 0; i < tickers.length; i += batchSize) {
       const batch = tickers.slice(i, i + batchSize);
       try {
-        const resp = await fetch(`/api/quotes?tickers=${batch.join(',')}`);
+        const resp = await fetch(apiUrl(`/api/quotes?tickers=${batch.join(',')}`));
         if (resp.ok) {
           const data = await resp.json();
           if (data.quotes) allQuotes.push(...data.quotes);
@@ -93,7 +94,7 @@ async function loadMarketData(forceRefresh = false) {
       }).join('\n');
 
     try {
-      const aiResp = await fetch('/api/market-analysis', {
+      const aiResp = await fetch(apiUrl('/api/market-analysis'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ movers: topMovers || 'Markets relatively flat today.', refresh: forceRefresh })
@@ -271,7 +272,7 @@ async function searchStock(query) {
     // 2. If no local match and looks like a company name (not a ticker), try Yahoo search
     if (!nameMatch && q.length > 4 && /[a-z\s]/.test(q)) {
       try {
-        const searchResp = await fetch(`/api/stock-search?q=${encodeURIComponent(q)}`);
+        const searchResp = await fetch(apiUrl(`/api/stock-search?q=${encodeURIComponent(q)}`));
         if (searchResp.ok) {
           const searchData = await searchResp.json();
           if (searchData.symbol) ticker = searchData.symbol;
@@ -280,7 +281,7 @@ async function searchStock(query) {
     }
 
     // 3. Fetch quote for resolved ticker
-    const resp = await fetch(`/api/quotes?tickers=${encodeURIComponent(ticker)}`);
+    const resp = await fetch(apiUrl(`/api/quotes?tickers=${encodeURIComponent(ticker)}`));
     if (!resp.ok) throw new Error(`API returned ${resp.status}`);
     const data = await resp.json();
     const quote = data.quotes?.[0];

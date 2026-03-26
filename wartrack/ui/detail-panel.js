@@ -7,6 +7,7 @@ import { fetchNewsForHotspot, getCacheAge, timeAgo, severityColor } from '../lay
 import { openFeedForHotspot } from './news-feed.js';
 import { renderSaveButton, bindSaveButtons } from './favorites.js';
 import { renderGroundViewButton, bindGroundViewButtons } from './ground-view.js';
+import { apiUrl } from '../config.js';
 
 let panelEl, bodyEl, titleEl, closeBtn;
 let activeViewer = null;
@@ -492,7 +493,7 @@ async function fetchRoverPhotos() {
   if (!container) return;
 
   try {
-    const resp = await fetch('/api/nasa?type=mars-rover');
+    const resp = await fetch(apiUrl('/api/nasa?type=mars-rover'));
     if (!resp.ok) throw new Error('NASA API unavailable');
     const data = await resp.json();
     const photos = data.latest_photos || data.photos || [];
@@ -638,7 +639,7 @@ async function renderNexusTab(hs, sColor) {
     const articles = await fetchNewsForHotspot(hs);
     const articleContext = articles.slice(0, 5).map(a => `- ${a.title} (${a.source?.name || 'Unknown'})`).join('\n');
 
-    const resp = await fetch('/api/analysis', {
+    const resp = await fetch(apiUrl('/api/analysis'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -743,7 +744,7 @@ async function loadEntityInsight(containerId, entityType, entityData) {
   container.innerHTML = '<div class="nexus-loading">◆ NEXUS analyzing...</div>';
 
   try {
-    const resp = await fetch('/api/entity-insight', {
+    const resp = await fetch(apiUrl('/api/entity-insight'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entityType, entityData })

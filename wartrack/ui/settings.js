@@ -4,6 +4,7 @@
 // ============================================
 
 import { isAuthenticated, getAuthHeaders } from './auth.js';
+import { apiUrl } from '../config.js';
 
 const STORAGE_KEY = 'wartrack_settings';
 
@@ -95,7 +96,7 @@ async function loadBillingStatus() {
   try {
     const headers = await getAuthHeaders();
     if (!headers.Authorization) return;
-    const resp = await fetch('/api/billing/status', { headers });
+    const resp = await fetch(apiUrl('/api/billing/status'), { headers });
     if (!resp.ok) return;
     const data = await resp.json();
     updateBillingUI(data);
@@ -138,7 +139,7 @@ async function handleUpgrade(plan) {
 
   try {
     const headers = await getAuthHeaders();
-    const resp = await fetch('/api/billing/checkout', {
+    const resp = await fetch(apiUrl('/api/billing/checkout'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify({ plan })
@@ -164,7 +165,7 @@ async function handleManage() {
 
   try {
     const headers = await getAuthHeaders();
-    const resp = await fetch('/api/billing/portal', {
+    const resp = await fetch(apiUrl('/api/billing/portal'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headers }
     });

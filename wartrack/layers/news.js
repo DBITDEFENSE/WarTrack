@@ -4,6 +4,7 @@
 // ============================================
 
 import { NEWS_CACHE_TTL, NEWS_MAX_ARTICLES, NEWS_FETCH_DELAY } from '../config.js';
+import { apiUrl } from '../config.js';
 
 const NEWS_CACHE = {};
 window._newsCacheRef = NEWS_CACHE; // expose for correlator
@@ -48,7 +49,7 @@ export async function fetchNewsForHotspot(hotspot) {
   if (cached) return cached.articles;
 
   try {
-    const resp = await fetch(`/api/news?q=${encodeURIComponent(hotspot.searchQuery || hotspot.name)}&max=${NEWS_MAX_ARTICLES}`);
+    const resp = await fetch(apiUrl(`/api/news?q=${encodeURIComponent(hotspot.searchQuery || hotspot.name)}&max=${NEWS_MAX_ARTICLES}`));
     if (!resp.ok) {
       console.warn(`News fetch failed for ${hotspot.name}: ${resp.status}`);
       return [];

@@ -4,6 +4,7 @@
 // Falls back to server-side auth if Clerk unavailable
 // ============================================
 
+import { apiUrl } from '../config.js';
 let clerkInstance = null;
 let currentUser = null;
 
@@ -90,7 +91,7 @@ export async function initAuth() {
     const saved = localStorage.getItem('wartrack_token');
     if (saved) {
       try {
-        const resp = await fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${saved}` } });
+        const resp = await fetch(apiUrl('/api/auth/me'), { headers: { 'Authorization': `Bearer ${saved}` } });
         if (resp.ok) {
           const data = await resp.json();
           currentUser = data.user;

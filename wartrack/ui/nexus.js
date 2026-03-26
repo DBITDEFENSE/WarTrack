@@ -3,6 +3,7 @@
 // User-triggered, location-resolving, camera-controlling
 // ============================================
 
+import { apiUrl } from '../config.js';
 let panelEl, messagesEl, inputEl;
 let viewer = null;
 let conversation = []; // { role: 'user'|'nexus', text, location? }
@@ -89,7 +90,7 @@ async function submitQuery() {
       };
     } catch { /* correlation not ready */ }
 
-    const resp = await fetch('/api/nexus', {
+    const resp = await fetch(apiUrl('/api/nexus'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, liveContext })

@@ -3,6 +3,7 @@
 // ============================================
 
 import { appState, updateStats } from '../main.js';
+import { apiUrl } from '../config.js';
 
 let dataSource = null;
 let satRecords = new Map();
@@ -132,7 +133,7 @@ export async function initSatellites(viewer) {
 
   for (const group of groups) {
     try {
-      const resp = await fetch(`/api/tle?group=${group.name}`);
+      const resp = await fetch(apiUrl(`/api/tle?group=${group.name}`));
       if (!resp.ok) continue;
       const text = await resp.text();
       const sats = parseTLE(text, group.category);
