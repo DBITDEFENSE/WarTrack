@@ -12,6 +12,7 @@ import { handleAuth } from './routes/auth.js';
 import { handleFavorites } from './routes/favorites.js';
 import { handleAI } from './routes/ai.js';
 import { handleBilling } from './routes/billing.js';
+import { apiTracker } from './lib/rate-limiter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -217,12 +218,18 @@ async function getOpenSkyToken() {
 
 // Server-side cache for OpenSky data
 let openSkyCache = { data: null, timestamp: 0 };
-const OPENSKY_CACHE_TTL = 15000;
 
 async function fetchOpenSky() {
   const now = Date.now();
-  if (openSkyCache.data && (now - openSkyCache.timestamp) < OPENSKY_CACHE_TTL) {
+  const cacheTTL = apiTracker.getAdaptiveTTL('opensky');
+  if (openSkyCache.data && (now - openSkyCache.timestamp) < cacheTTL) {
     return { data: openSkyCache.data, cached: true };
+  }
+
+  // Check budget before making upstream request
+  if (!apiTracker.canRequest('opensky')) {
+    if (openSkyCache.data) return { data: openSkyCache.data, cached: true, budgetExhausted: true };
+    return { data: { error: 'budget_exhausted', states: null }, cached: false, budgetExhausted: true };
   }
 
   const url = 'https://opensky-network.org/api/states/all';
@@ -235,6 +242,7 @@ async function fetchOpenSky() {
   }
 
   try {
+    apiTracker.recordRequest('opensky');
     const { data, statusCode } = await fetchUrl(url, { headers });
 
     if (statusCode === 200 && data && data.states) {
@@ -244,17 +252,20 @@ async function fetchOpenSky() {
     }
 
     if (statusCode === 429) {
+      apiTracker.recordError('opensky');
       if (openSkyCache.data) {
         return { data: openSkyCache.data, cached: true, rateLimited: true };
       }
       return { data: { error: 'rate_limited', states: null }, cached: false, rateLimited: true };
     }
 
+    apiTracker.recordError('opensky');
     if (openSkyCache.data) {
       return { data: openSkyCache.data, cached: true };
     }
     return { data: data || { error: 'fetch_failed', states: null }, cached: false };
   } catch (err) {
+    apiTracker.recordError('opensky');
     if (openSkyCache.data) {
       return { data: openSkyCache.data, cached: true };
     }
@@ -267,7 +278,6 @@ async function fetchOpenSky() {
 // Both fetched in parallel with 8-second timeout each
 // ============================================
 const flightsRegionCache = new Map();
-const FLIGHTS_CACHE_TTL = 30000;
 
 function adsbxToOpenSkyState(ac) {
   return [
@@ -307,29 +317,34 @@ async function fetchFlightsForBbox(lamin, lamax, lomin, lomax) {
   const cacheKey = `${Math.round(lamin)},${Math.round(lamax)},${Math.round(lomin)},${Math.round(lomax)}`;
   const now = Date.now();
   const cached = flightsRegionCache.get(cacheKey);
-  if (cached && (now - cached.timestamp) < FLIGHTS_CACHE_TTL) {
+  const bboxCacheTTL = apiTracker.getAdaptiveTTL('opensky-bbox');
+  if (cached && (now - cached.timestamp) < bboxCacheTTL) {
     return { data: cached.data, cached: true, sources: ['cache'] };
   }
 
   const sources = [];
   const aircraftMap = new Map();
 
-  // Fetch both sources IN PARALLEL with 8-second timeouts
+  // Fetch both sources IN PARALLEL with 8-second timeouts (budget-aware)
   const openSkyPromise = (async () => {
+    if (!apiTracker.canRequest('opensky-bbox')) return []; // budget exhausted
     try {
+      apiTracker.recordRequest('opensky-bbox');
       const token = await getOpenSkyToken();
       const headers = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
       const osUrl = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
       const { data, statusCode } = await fetchWithTimeout(osUrl, { headers }, 8000);
       if (statusCode === 200 && data?.states) return data.states;
-    } catch { /* timeout or error */ }
+      apiTracker.recordError('opensky-bbox');
+    } catch { apiTracker.recordError('opensky-bbox'); }
     return [];
   })();
 
   const adsbxPromise = (async () => {
-    if (!ADSBX_API_KEY) return [];
+    if (!ADSBX_API_KEY || !apiTracker.canRequest('adsbx')) return [];
     try {
+      apiTracker.recordRequest('adsbx');
       const centerLat = (parseFloat(lamin) + parseFloat(lamax)) / 2;
       const centerLon = (parseFloat(lomin) + parseFloat(lomax)) / 2;
       const dist = Math.min(250, Math.max(50, Math.round(
@@ -340,7 +355,8 @@ async function fetchFlightsForBbox(lamin, lamax, lomin, lomax) {
         headers: { 'X-RapidAPI-Key': ADSBX_API_KEY, 'X-RapidAPI-Host': 'adsbexchange-com1.p.rapidapi.com' }
       }, 8000);
       if (statusCode === 200 && data?.ac) return data.ac;
-    } catch { /* timeout or error */ }
+      apiTracker.recordError('adsbx');
+    } catch { apiTracker.recordError('adsbx'); }
     return [];
   })();
 
@@ -560,6 +576,18 @@ function serveStatic(req, res, urlPath) {
 }
 
 // ============================================
+// RATE LIMIT HEADERS — attach budget info to every API response
+// ============================================
+function setRateLimitHeaders(res, api) {
+  const info = apiTracker.getBudgetInfo(api);
+  res.setHeader('X-RateLimit-Limit', String(info.limit));
+  res.setHeader('X-RateLimit-Remaining', String(info.remaining));
+  res.setHeader('X-RateLimit-Used', String(info.used));
+  res.setHeader('X-Cache-TTL', String(Math.round(info.ttl / 1000)));
+  if (info.fallback) res.setHeader('X-Fallback-Source', info.fallback);
+}
+
+// ============================================
 // HTTP SERVER
 // ============================================
 const server = http.createServer(async (req, res) => {
@@ -577,6 +605,12 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  // ---- API BUDGET MONITOR (for debugging) ----
+  if (urlPath === '/api/budget') {
+    res.writeHead(200);
+    return res.end(JSON.stringify(apiTracker.getAllBudgets(), null, 2));
+  }
 
   try {
     // Parse body for POST/DELETE
@@ -609,17 +643,19 @@ const server = http.createServer(async (req, res) => {
     // ---- OPENSKY (legacy, still available) ----
     if (urlPath === '/api/opensky') {
       const result = await fetchOpenSky();
+      setRateLimitHeaders(res, 'opensky');
       res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
       if (result.rateLimited) res.setHeader('X-Rate-Limited', 'true');
+      if (result.budgetExhausted) res.setHeader('X-Budget-Exhausted', 'true');
       res.writeHead(200);
       return res.end(JSON.stringify(result.data));
     }
 
     // ---- MERGED FLIGHTS (OpenSky + ADSB-X, bbox-based, deduplicated) ----
     if (urlPath === '/api/flights') {
+      setRateLimitHeaders(res, 'opensky-bbox');
       const global = url.searchParams.get('global') === '1';
       if (global) {
-        // Global mode: fetch OpenSky all + multiple ADSB-X regions
         const result = await fetchGlobalFlights();
         res.setHeader('X-Cache', result.cached ? 'HIT' : 'MISS');
         res.setHeader('X-Sources', (result.sources || []).join(','));
@@ -637,16 +673,18 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify(result.data));
     }
 
-    // ---- NEWS (with server-side cache + multi-source) ----
+    // ---- NEWS (with server-side cache + multi-source + budget tracking) ----
     if (urlPath === '/api/news') {
+      setRateLimitHeaders(res, 'gnews');
       const q = url.searchParams.get('q') || 'conflict';
       const max = Math.min(parseInt(url.searchParams.get('max')) || 8, 10);
 
-      // Server-side news cache (10 min per query)
+      // Server-side news cache (adaptive TTL based on budget)
       if (!global.newsCache) global.newsCache = {};
       const cacheKey = `news-${q}`;
       const cached = global.newsCache[cacheKey];
-      if (cached && Date.now() - cached.ts < 600000) {
+      const newsCacheTTL = apiTracker.getAdaptiveTTL('gnews');
+      if (cached && Date.now() - cached.ts < newsCacheTTL) {
         res.setHeader('X-Cache', 'HIT');
         res.writeHead(200);
         return res.end(JSON.stringify(cached.data));
@@ -654,17 +692,21 @@ const server = http.createServer(async (req, res) => {
 
       let articles = [];
 
-      // Primary source: GNews
-      if (GNEWS_API_KEY) {
+      // Primary source: GNews (only if budget available)
+      if (GNEWS_API_KEY && apiTracker.canRequest('gnews')) {
         try {
+          apiTracker.recordRequest('gnews');
           const gnewsUrl = `https://gnews.io/api/v4/search?q=${encodeURIComponent(q)}&lang=en&max=${max}&apikey=${GNEWS_API_KEY}`;
           const { data } = await fetchUrl(gnewsUrl);
           if (data?.articles) articles = data.articles;
-        } catch { /* GNews failed, try secondary */ }
+          else apiTracker.recordError('gnews');
+        } catch { apiTracker.recordError('gnews'); }
       }
 
-      // Secondary source: Google News RSS (free, no key needed)
+      // Secondary/fallback source: Google News RSS (free, no key needed)
+      // Always used when GNews budget is exhausted or returns few results
       if (articles.length < 3) {
+        apiTracker.recordRequest('google-rss');
         try {
           const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`;
           const { data: rssData } = await fetchUrl(rssUrl);
@@ -946,21 +988,22 @@ const server = http.createServer(async (req, res) => {
 
     // ---- CAMERAS (Windy Webcams) ----
     if (urlPath === '/api/cameras') {
+      setRateLimitHeaders(res, 'windy');
       if (!WINDY_WEBCAMS_KEY) {
-        // Return sample cameras when no API key
         res.writeHead(200);
         return res.end(JSON.stringify({ webcams: generateSampleCameras(url.searchParams.get('bbox')) }));
       }
-      const bbox = url.searchParams.get('bbox') || '60,30,20,-10'; // default Europe
-      // Cache by bbox rounded to 1 decimal
+      const bbox = url.searchParams.get('bbox') || '60,30,20,-10';
       const cacheKey = 'cam-' + bbox.split(',').map(n => parseFloat(n).toFixed(0)).join(',');
       if (!global.cameraCache) global.cameraCache = {};
       const cached = global.cameraCache[cacheKey];
-      if (cached && Date.now() - cached.ts < 600000) { // 10 min cache
+      const camCacheTTL = apiTracker.getAdaptiveTTL('windy');
+      if (cached && Date.now() - cached.ts < camCacheTTL) {
         res.writeHead(200);
         return res.end(JSON.stringify(cached.data));
       }
       try {
+        apiTracker.recordRequest('windy');
         const camUrl = `https://api.windy.com/webcams/api/v3/webcams?lang=en&limit=50&offset=0&bbox=${bbox}&include=images,location,player,urls,categories`;
         const { data, statusCode } = await fetchUrl(camUrl, {
           headers: { 'x-windy-api-key': WINDY_WEBCAMS_KEY }
@@ -1057,22 +1100,25 @@ const server = http.createServer(async (req, res) => {
 
     // ---- TLE (CelesTrak satellite data) ----
     if (urlPath === '/api/tle') {
+      setRateLimitHeaders(res, 'celestrak');
       const group = url.searchParams.get('group') || 'stations';
       const allowed = ['stations', 'starlink', 'military', 'gps-ops', 'weather', 'active'];
       if (!allowed.includes(group)) {
         res.writeHead(400);
         return res.end(JSON.stringify({ error: 'Invalid TLE group' }));
       }
-      // 2-hour cache per group
+      // Adaptive cache TTL (2hr base, up to 12hr when budget low)
       if (!global.tleCache) global.tleCache = {};
       const cached = global.tleCache[group];
-      if (cached && Date.now() - cached.ts < 7200000) {
+      const tleCacheTTL = apiTracker.getAdaptiveTTL('celestrak');
+      if (cached && Date.now() - cached.ts < tleCacheTTL) {
         res.setHeader('Content-Type', 'text/plain');
         res.setHeader('X-Cache', 'HIT');
         res.writeHead(200);
         return res.end(cached.data);
       }
       try {
+        apiTracker.recordRequest('celestrak');
         const tleUrl = `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=tle`;
         const { data, statusCode } = await fetchUrl(tleUrl);
         if (statusCode === 200) {
@@ -1261,12 +1307,13 @@ function generateSampleCameras(bboxStr) {
 
 server.listen(PORT, () => {
   console.log(`\n  WARTRACK running at http://localhost:${PORT}\n`);
-  console.log(`  Data APIs:`);
-  console.log(`    /api/opensky     — Flight data ${openSkyCreds ? '(OAuth2 authenticated)' : '(anonymous)'}`);
-  console.log(`    /api/news?q=     — GNews headlines`);
-  console.log(`    /api/vessels     — AIS vessel data (Digitraffic)`);
+  console.log(`  Data APIs (adaptive rate-limit protection enabled):`);
+  console.log(`    /api/flights     — OpenSky + ADSB-X merged (${openSkyCreds ? 'OAuth2' : 'anon'}, 400/day budget)`);
+  console.log(`    /api/news?q=     — GNews + Google RSS fallback (${GNEWS_API_KEY ? '100/day budget' : 'RSS-only'})`);
+  console.log(`    /api/vessels     — AIS vessel data (Digitraffic, free)`);
   console.log(`    /api/social      — GDELT + Reddit + Bluesky`);
-  console.log(`    /api/cameras     — Webcams ${WINDY_WEBCAMS_KEY ? '(Windy API)' : '(sample data — set WINDY_WEBCAMS_KEY for live)'}`);
+  console.log(`    /api/cameras     — Webcams ${WINDY_WEBCAMS_KEY ? '(Windy, 1000/day)' : '(sample data)'}`);
+  console.log(`    /api/budget      — API budget monitor (JSON)`);
   console.log(`  Auth APIs:`);
   console.log(`    POST /api/auth/register`);
   console.log(`    POST /api/auth/login`);
