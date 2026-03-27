@@ -371,13 +371,36 @@ input:checked + .thermal-indicator {
   transition: background 0.15s;
 }
 
-.gcm-item:hover {
+.gcm-item:hover,
+.gcm-item:active {
   background: rgba(0, 255, 136, 0.08);
   color: var(--hud-green);
 }
 
+.gcm-item:active {
+  background: rgba(0, 255, 136, 0.15);
+}
+
 .gcm-item + .gcm-item {
   border-top: 1px solid rgba(0, 255, 136, 0.06);
+}
+
+/* Mobile: larger touch targets for context menu */
+@media (max-width: 600px) {
+  .globe-context-menu {
+    min-width: 240px;
+  }
+  .gcm-header {
+    padding: 10px 14px;
+    font-size: 11px;
+  }
+  .gcm-item {
+    padding: 14px 14px;
+    font-size: 13px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
 }
 
 /* Sub-toggle (indented option under a parent layer) */

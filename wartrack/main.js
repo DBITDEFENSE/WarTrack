@@ -337,10 +337,9 @@ async function init() {
     initSettings();
     initGroundView();
 
-    // RIGHT-CLICK anywhere on the globe → "Ground View Here" context menu
+    // RIGHT-CLICK (desktop) or LONG-PRESS (mobile) anywhere on the globe → context menu
     const rightClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
     rightClickHandler.setInputAction((click) => {
-      // Get the globe position from the click
       const ray = viewer.camera.getPickRay(click.position);
       if (!ray) return;
       const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
@@ -348,10 +347,11 @@ async function init() {
       const carto = Cesium.Cartographic.fromCartesian(cartesian);
       const lat = Cesium.Math.toDegrees(carto.latitude);
       const lon = Cesium.Math.toDegrees(carto.longitude);
-
-      // Show a small context menu at click position
       showGlobeContextMenu(click.position.x, click.position.y, lat, lon);
     }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
+
+    // LONG-PRESS on touch devices — fires context menu after 600ms hold
+    setupLongPress(viewer);
 
     // Listen for settings changes to apply maxAircraft + refreshRate dynamically
     on('settings:change', (s) => {
@@ -581,4 +581,73 @@ function showGlobeContextMenu(x, y, lat, lon) {
     menu.remove();
     document.removeEventListener('wheel', closeMenu);
   }, { once: true });
+}
+
+// ============================================
+// LONG-PRESS HANDLER — Touch devices context menu
+// Triggers after 600ms hold without moving >10px
+// ============================================
+function setupLongPress(viewer) {
+  const canvas = viewer.scene.canvas;
+  let pressTimer = null;
+  let startX = 0;
+  let startY = 0;
+  const HOLD_MS = 600;
+  const MOVE_THRESHOLD = 10; // px — cancel if finger moves more than this
+
+  canvas.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return; // only single-finger
+    const touch = e.touches[0];
+    startX = touch.clientX;
+    startY = touch.clientY;
+
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      // Resolve globe position from touch point
+      const rect = canvas.getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const y = touch.clientY - rect.top;
+      const position = new Cesium.Cartesian2(x * (canvas.width / rect.width), y * (canvas.height / rect.height));
+      const ray = viewer.camera.getPickRay(position);
+      if (!ray) return;
+      const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+      if (!cartesian) return;
+      const carto = Cesium.Cartographic.fromCartesian(cartesian);
+      const lat = Cesium.Math.toDegrees(carto.latitude);
+      const lon = Cesium.Math.toDegrees(carto.longitude);
+
+      // Haptic feedback if available
+      if (navigator.vibrate) navigator.vibrate(30);
+
+      showGlobeContextMenu(touch.clientX, touch.clientY, lat, lon);
+
+      // Prevent the touch from also being a click/drag
+      e.preventDefault();
+    }, HOLD_MS);
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (!pressTimer) return;
+    const touch = e.touches[0];
+    const dx = Math.abs(touch.clientX - startX);
+    const dy = Math.abs(touch.clientY - startY);
+    if (dx > MOVE_THRESHOLD || dy > MOVE_THRESHOLD) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  });
+
+  canvas.addEventListener('touchend', () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  });
+
+  canvas.addEventListener('touchcancel', () => {
+    if (pressTimer) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  });
 }
