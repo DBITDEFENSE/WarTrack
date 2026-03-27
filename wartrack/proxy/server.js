@@ -935,10 +935,8 @@ const server = http.createServer(async (req, res) => {
       const lon = url.searchParams.get('lon') || '0';
       try {
         const gUrl = `https://maps.googleapis.com/maps/api/streetview?size=800x400&location=${lat},${lon}&key=${GOOGLE_MAPS_KEY}&return_error_code=true`;
-        const mod = await import('https');
-        // Pipe the image response directly
         const imgResp = await new Promise((resolve, reject) => {
-          (await import('https')).default.get(gUrl, resolve).on('error', reject);
+          https.get(gUrl, resolve).on('error', reject);
         });
         res.writeHead(imgResp.statusCode, {
           'Content-Type': imgResp.headers['content-type'] || 'image/jpeg',
@@ -963,7 +961,7 @@ const server = http.createServer(async (req, res) => {
       try {
         const gUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lon}&zoom=16&size=800x400&maptype=satellite&key=${GOOGLE_MAPS_KEY}`;
         const imgResp = await new Promise((resolve, reject) => {
-          (await import('https')).default.get(gUrl, resolve).on('error', reject);
+          https.get(gUrl, resolve).on('error', reject);
         });
         res.writeHead(imgResp.statusCode, {
           'Content-Type': imgResp.headers['content-type'] || 'image/png',
