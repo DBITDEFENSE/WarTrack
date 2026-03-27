@@ -171,7 +171,7 @@ export function takeSnapshot(flightEntities, vesselEntities) {
  * Requires at least 3 prior snapshots for a meaningful baseline.
  * @param {Snapshot} current - The most recent data snapshot
  */
-function detectAnomalies(current) {
+async function detectAnomalies(current) {
   if (snapshots.length < 3) return; // need baseline
 
   const hotspots = getHotspots();
@@ -221,8 +221,9 @@ function detectAnomalies(current) {
     // Rule 4: CORRELATED ESCALATION — mil spike + GPS jamming in same region
     // Uses correlation engine data if available
     try {
-      const { getRegionIntel } = await import('./correlator.js');
-      const intel = getRegionIntel()?.get?.(hs.name);
+      // Lazy import to avoid circular dependency (correlator ↔ events)
+      const correlatorModule = await import('./correlator.js').catch(() => null);
+      const intel = correlatorModule?.getRegionIntel()?.get?.(hs.name);
       if (intel && intel.compositeScore >= 0.6 && intel.milAircraftCount >= 5 && intel.jammingCells > 0) {
         addAlert({
           type: 'CORRELATED_ESCALATION',
