@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run --config vitest.config.js"
   },
   "description": "Apache Strait Runner - Convoy Defense Action Game",
   "dependencies": {
@@ -14,6 +15,7 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "typescript": "^5.9.3",
-    "vite": "^8.0.1"
+    "vite": "^8.0.1",
+    "vitest": "^1.6.1"
   }
 }

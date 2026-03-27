@@ -12,6 +12,7 @@
 
 import { appState } from '../main.js';
 import { getHotspots } from './hotspots.js';
+import { inRegion, createAssessment, computeThreatScore, WEIGHTS, REGION_RADIUS_DEG } from './correlator-logic.js';
 
 /**
  * @typedef {Object} RegionAssessment
@@ -47,73 +48,20 @@ let lastCorrelation = 0;
 /** @constant {number} Minimum interval between correlation runs in milliseconds */
 const CORRELATION_INTERVAL = 15000; // 15 seconds
 
-/** @constant {number} Approximate radius in degrees (~550km) for capturing entities near a region */
-const REGION_RADIUS_DEG = 5; // ~550km radius for region capture
-
-/**
- * @constant {Object<string, number>} Severity weights for composite threat scoring.
- * Each key maps a signal category to its weight in the final score (0-1).
- */
-const WEIGHTS = {
-  milAircraft:  0.25,  // military aircraft density
-  jammingScore: 0.30,  // GPS interference severity
-  newsActivity: 0.15,  // recent news volume
-  vesselAnomaly: 0.15, // vessel density change
-  satCoverage:  0.05,  // surveillance satellite presence
-  civilianFlight: 0.10, // civilian traffic (inverse — fewer = more concerning)
-};
+// WEIGHTS, REGION_RADIUS_DEG, inRegion, createAssessment, computeThreatScore
+// are imported from correlator-logic.js
 
 // ============================================
 // REGION ASSESSMENT STRUCTURE
 // ============================================
 
-/**
- * Creates a blank RegionAssessment for a given hotspot.
- * @param {Object} hotspot - Hotspot definition with name, lat, lon, severity
- * @returns {RegionAssessment} Initialized assessment with zeroed counters
- */
-function createAssessment(hotspot) {
-  return {
-    name: hotspot.name,
-    lat: hotspot.lat,
-    lon: hotspot.lon,
-    baseSeverity: hotspot.severity,
-    // Layer signals
-    milAircraftCount: 0,
-    civAircraftCount: 0,
-    totalAircraftCount: 0,
-    vesselCount: 0,
-    jammingCells: 0,
-    jammingAvgScore: 0,
-    satCount: 0,
-    newsCount: 0,
-    recentNews: [],
-    // Computed
-    threatLevel: 'GREEN',  // GREEN | YELLOW | ORANGE | RED
-    compositeScore: 0,
-    signals: [],           // human-readable evidence strings
-    timestamp: Date.now(),
-  };
-}
+// createAssessment is now imported from correlator-logic.js
 
 // ============================================
 // DISTANCE CHECK (degrees, rough)
 // ============================================
 
-/**
- * Checks whether an entity falls within the rectangular region around a hotspot.
- * Uses a simple bounding-box check in degrees (not great-circle distance).
- * @param {number} entityLat - Entity latitude
- * @param {number} entityLon - Entity longitude
- * @param {number} regionLat - Region center latitude
- * @param {number} regionLon - Region center longitude
- * @returns {boolean} True if the entity is within REGION_RADIUS_DEG of the center
- */
-function inRegion(entityLat, entityLon, regionLat, regionLon) {
-  const dlat = Math.abs(entityLat - regionLat);
-  const dlon = Math.abs(entityLon - regionLon);
-  return dlat < REGION_RADIUS_DEG && dlon < REGION_RADIUS_DEG;
-}
+// inRegion is now imported from correlator-logic.js
 
 // ============================================
 // CORE CORRELATION — called every 15s
@@ -216,73 +164,8 @@ export function runCorrelation(viewer) {
     // News activity
     assessment.newsCount = newsCounts[hs.name] || 0;
 
-    // ============================================
-    // COMPOSITE THREAT SCORING
-    // ============================================
-    let score = 0;
-    const signals = [];
-
-    // Military aircraft signal
-    if (assessment.milAircraftCount >= 10) {
-      score += WEIGHTS.milAircraft * 1.0;
-      signals.push(`${assessment.milAircraftCount} MIL aircraft in zone`);
-    } else if (assessment.milAircraftCount >= 5) {
-      score += WEIGHTS.milAircraft * 0.6;
-      signals.push(`${assessment.milAircraftCount} MIL aircraft detected`);
-    } else if (assessment.milAircraftCount >= 2) {
-      score += WEIGHTS.milAircraft * 0.3;
-    }
-
-    // GPS jamming signal
-    if (assessment.jammingAvgScore >= 0.6) {
-      score += WEIGHTS.jammingScore * 1.0;
-      signals.push(`GPS interference: HIGH (${assessment.jammingCells} cells)`);
-    } else if (assessment.jammingAvgScore >= 0.3) {
-      score += WEIGHTS.jammingScore * 0.5;
-      signals.push(`GPS interference: MODERATE`);
-    }
-
-    // News volume signal
-    if (assessment.newsCount >= 5) {
-      score += WEIGHTS.newsActivity * 1.0;
-      signals.push(`High news volume (${assessment.newsCount} articles)`);
-    } else if (assessment.newsCount >= 2) {
-      score += WEIGHTS.newsActivity * 0.5;
-    }
-
-    // Vessel density (high = potentially disrupted trade route)
-    if (assessment.vesselCount >= 20) {
-      score += WEIGHTS.vesselAnomaly * 0.3;
-    } else if (assessment.vesselCount <= 2 && hs.severity !== 'watch') {
-      // Low vessel count near active zone = possible avoidance
-      score += WEIGHTS.vesselAnomaly * 0.8;
-      signals.push(`Low vessel traffic (${assessment.vesselCount}) — possible route avoidance`);
-    }
-
-    // Civilian traffic inverse (fewer civilians = more concerning)
-    if (assessment.civAircraftCount <= 5 && assessment.milAircraftCount >= 3) {
-      score += WEIGHTS.civilianFlight * 0.7;
-      signals.push('Low civilian air traffic in military-active zone');
-    }
-
-    // Satellite overflight
-    if (assessment.satCount >= 2) {
-      score += WEIGHTS.satCoverage * 0.5;
-      signals.push(`${assessment.satCount} satellites overhead`);
-    }
-
-    // Base severity boost (conflict zones start elevated)
-    if (hs.severity === 'high') score = Math.min(1, score + 0.15);
-    else if (hs.severity === 'elevated') score = Math.min(1, score + 0.05);
-
-    // Classify threat level
-    assessment.compositeScore = Math.min(1, score);
-    if (score >= 0.7) assessment.threatLevel = 'RED';
-    else if (score >= 0.45) assessment.threatLevel = 'ORANGE';
-    else if (score >= 0.25) assessment.threatLevel = 'YELLOW';
-    else assessment.threatLevel = 'GREEN';
-
-    assessment.signals = signals;
+    // Compute composite threat score and classify threat level
+    computeThreatScore(assessment, hs.severity);
     assessment.timestamp = now;
 
     newIntel.set(hs.name, assessment);

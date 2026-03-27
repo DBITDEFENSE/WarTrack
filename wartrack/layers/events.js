@@ -11,6 +11,12 @@
 // ============================================
 
 import { getHotspots } from './hotspots.js';
+import {
+  matchesConflictKeywords,
+  shouldDedup as shouldDedupAlert,
+  computeBaseline as computeBaselineFromSnapshots,
+  detectAnomaliesForRegion,
+} from './events-logic.js';
 
 /**
  * @typedef {Object} Alert
@@ -75,8 +81,7 @@ window.addEventListener('wartrack-jamming-update', (e) => {
 // OSINT ALERT — triggered when social content has conflict keywords
 // ============================================
 
-/** @constant {RegExp} Pattern matching conflict-related keywords in OSINT article titles */
-const CONFLICT_KEYWORDS = /\b(strike|explosion|attack|missile|bombing|military operation|escalation|invasion|airstrike|shelling|ceasefire broken)\b/i;
+// CONFLICT_KEYWORDS regex is now in events-logic.js; matchesConflictKeywords imported above
 
 /**
  * Checks a list of OSINT items for conflict-keyword matches and raises an alert
@@ -88,7 +93,7 @@ const CONFLICT_KEYWORDS = /\b(strike|explosion|attack|missile|bombing|military o
  */
 export function checkOsintAlert(items, regionName, lat, lon) {
   if (!items || items.length === 0) return;
-  const matches = items.filter(i => CONFLICT_KEYWORDS.test(i.title || ''));
+  const matches = items.filter(i => matchesConflictKeywords(i.title || ''));
   if (matches.length >= 2) {
     addAlert({
       type: 'OSINT_ALERT',
@@ -242,23 +247,9 @@ function detectAnomalies(current) {
   }
 }
 
-/**
- * Computes a rolling baseline by averaging all snapshots except the most recent.
- * @returns {Object<string, {flights: number, military: number, vessels: number}>} Average counts per region
- */
+// computeBaseline is now imported as computeBaselineFromSnapshots from events-logic.js
 function computeBaseline() {
-  const baseline = {};
-  const count = Math.max(snapshots.length - 1, 1); // exclude current
-
-  for (const snap of snapshots.slice(0, -1)) {
-    for (const [region, data] of Object.entries(snap.regions)) {
-      if (!baseline[region]) baseline[region] = { flights: 0, military: 0, vessels: 0 };
-      baseline[region].flights += data.flights / count;
-      baseline[region].military += data.military / count;
-      baseline[region].vessels += data.vessels / count;
-    }
-  }
-  return baseline;
+  return computeBaselineFromSnapshots(snapshots);
 }
 
 // ============================================
