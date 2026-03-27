@@ -54,6 +54,22 @@ export function initNewsFeed(v) {
     loadGlobalFeed();
   });
 
+  // Delegated click listener for news cards (registered once)
+  bodyEl.addEventListener('click', (e) => {
+    if (e.target.closest('a')) return; // let links work normally
+    const card = e.target.closest('.news-card');
+    if (card) {
+      const lat = parseFloat(card.dataset.lat);
+      const lon = parseFloat(card.dataset.lon);
+      if (!isNaN(lat) && !isNaN(lon) && viewer) {
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(lon, lat, 2000000),
+          duration: 1.5
+        });
+      }
+    }
+  });
+
   // Populate filter dropdown with hotspot names
   const hotspots = getHotspots();
   for (const hs of hotspots) {
@@ -121,21 +137,6 @@ function renderArticles() {
     `;
   }).join('');
 
-  // Attach flyTo click handlers
-  bodyEl.querySelectorAll('.news-card').forEach(card => {
-    card.addEventListener('click', (e) => {
-      // Don't hijack link clicks
-      if (e.target.closest('a')) return;
-      const lat = parseFloat(card.dataset.lat);
-      const lon = parseFloat(card.dataset.lon);
-      if (!isNaN(lat) && !isNaN(lon) && viewer) {
-        viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(lon, lat, 2000000),
-          duration: 1.5
-        });
-      }
-    });
-  });
 }
 
 // ============================================

@@ -50,6 +50,15 @@ export function initMarketPanel() {
     currentFilter = e.target.value;
     renderStocks();
   });
+
+  // Delegated click listener for market cards (registered once)
+  bodyEl.addEventListener('click', (e) => {
+    const card = e.target.closest('.market-card');
+    if (card) {
+      const ticker = card.dataset.ticker;
+      showStockDetail(ticker);
+    }
+  });
 }
 
 // ============================================
@@ -181,13 +190,6 @@ function renderStocks() {
 
   bodyEl.innerHTML = briefHtml + (cardsHtml || '<div class="market-empty">No stocks in this category</div>');
 
-  // Click handlers for expanded detail
-  bodyEl.querySelectorAll('.market-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const ticker = card.dataset.ticker;
-      showStockDetail(ticker);
-    });
-  });
 }
 
 // ============================================

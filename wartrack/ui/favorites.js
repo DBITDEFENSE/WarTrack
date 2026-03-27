@@ -30,6 +30,21 @@ export function initFavorites() {
     panelEl.classList.add('hidden');
   });
 
+  // Delegated click listener for fav-remove and fav-card (registered once)
+  bodyEl.addEventListener('click', (e) => {
+    const removeBtn = e.target.closest('.fav-remove');
+    if (removeBtn) {
+      e.stopPropagation();
+      const id = parseInt(removeBtn.dataset.favId);
+      removeFavorite(id);
+      return;
+    }
+    const card = e.target.closest('.fav-card');
+    if (card) {
+      // Reserved for future flyTo logic on card click
+    }
+  });
+
   // Listen for auth changes
   on('auth:change', (data) => {
     if (data.user) {
@@ -146,14 +161,6 @@ function renderPanel() {
     `;
   }).join('');
 
-  // Bind remove buttons
-  bodyEl.querySelectorAll('.fav-remove').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const id = parseInt(btn.dataset.favId);
-      removeFavorite(id);
-    });
-  });
 }
 
 // ============================================

@@ -98,6 +98,31 @@ export function initAlerts(viewer) {
     });
   }
 
+  // Delegated click listener for alert buttons (registered once)
+  bodyEl.addEventListener('click', (e) => {
+    const investigateBtn = e.target.closest('.alert-investigate');
+    if (investigateBtn) {
+      const lat = parseFloat(investigateBtn.dataset.lat);
+      const lon = parseFloat(investigateBtn.dataset.lon);
+      if (!isNaN(lat) && !isNaN(lon) && viewer) {
+        viewer.scene.requestRenderMode = false;
+        viewer.camera.flyTo({
+          destination: Cesium.Cartesian3.fromDegrees(lon, lat, 1500000),
+          duration: 1.5,
+          complete: () => { viewer.scene.requestRenderMode = true; },
+          cancel: () => { viewer.scene.requestRenderMode = true; },
+        });
+      }
+      return;
+    }
+    const dismissBtn = e.target.closest('.alert-dismiss');
+    if (dismissBtn) {
+      dismissAlert(dismissBtn.dataset.id);
+      renderAlerts(viewer);
+      updateBadge();
+    }
+  });
+
   // Listen for new alerts
   on('alert:new', (data) => {
     updateBadge();
@@ -153,28 +178,4 @@ function renderAlerts(viewer) {
     `;
   }).join('');
 
-  // Wire buttons
-  bodyEl.querySelectorAll('.alert-investigate').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const lat = parseFloat(e.target.dataset.lat);
-      const lon = parseFloat(e.target.dataset.lon);
-      if (!isNaN(lat) && !isNaN(lon) && viewer) {
-        viewer.scene.requestRenderMode = false;
-        viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(lon, lat, 1500000),
-          duration: 1.5,
-          complete: () => { viewer.scene.requestRenderMode = true; },
-          cancel: () => { viewer.scene.requestRenderMode = true; },
-        });
-      }
-    });
-  });
-
-  bodyEl.querySelectorAll('.alert-dismiss').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      dismissAlert(e.target.dataset.id);
-      renderAlerts(viewer);
-      updateBadge();
-    });
-  });
 }

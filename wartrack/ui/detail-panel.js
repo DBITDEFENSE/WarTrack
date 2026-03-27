@@ -80,6 +80,23 @@ export function initDetailPanel(viewer) {
     if (selectedEntity) { unhighlightEntity(selectedEntity); selectedEntity = null; }
   });
 
+  // Delegated click listener for detail tabs (registered once)
+  bodyEl.addEventListener('click', (e) => {
+    const tab = e.target.closest('.detail-tab');
+    if (tab && currentHotspot) {
+      bodyEl.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const sColor = severityColor(currentHotspot.severity);
+      if (tab.dataset.tab === 'info') {
+        renderInfoTab(currentHotspot, sColor);
+      } else if (tab.dataset.tab === 'news') {
+        renderNewsTab(currentHotspot, sColor);
+      } else if (tab.dataset.tab === 'nexus') {
+        renderNexusTab(currentHotspot, sColor);
+      }
+    }
+  });
+
   // Click handler on viewer
   const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
   handler.setInputAction((click) => {
@@ -263,21 +280,6 @@ async function showHotspotDetail(entity, activeTab = 'info') {
 
     <div id="detail-tab-content"></div>
   `;
-
-  // Tab click handlers
-  bodyEl.querySelectorAll('.detail-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      bodyEl.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      if (tab.dataset.tab === 'info') {
-        renderInfoTab(hs, sColor);
-      } else if (tab.dataset.tab === 'news') {
-        renderNewsTab(hs, sColor);
-      } else if (tab.dataset.tab === 'nexus') {
-        renderNexusTab(hs, sColor);
-      }
-    });
-  });
 
   panelEl.classList.remove('hidden');
 

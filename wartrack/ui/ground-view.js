@@ -10,6 +10,10 @@ const GOOGLE_API_KEY = ''; // DO NOT put keys here — they go in Railway env va
 const MAPILLARY_ACCESS_TOKEN = '';
 
 let modalEl = null;
+let _gvDelegatedListenerBound = false;
+let _gvCurrentLat = null;
+let _gvCurrentLon = null;
+let _gvMapillaryViewerUrl = null;
 
 // ============================================
 // INIT
@@ -43,6 +47,25 @@ export function initGroundView() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !modalEl.classList.contains('hidden')) closeGroundView();
   });
+
+  // Delegated click listener for interactive street view triggers (registered once)
+  const gvBody = modalEl.querySelector('#gv-body');
+  const gvActions = modalEl.querySelector('#gv-actions');
+  const handleInteractive = (e) => {
+    if (e.target.closest('#gv-preview-overlay') || e.target.closest('#gv-btn-streetview')) {
+      if (_gvCurrentLat !== null && _gvCurrentLon !== null) {
+        const body = document.getElementById('gv-body');
+        const badge = document.getElementById('gv-provider-badge');
+        showInteractiveStreetView(_gvCurrentLat, _gvCurrentLon, body, badge);
+      }
+    }
+    if (e.target.closest('#gv-mapillary-open') && _gvMapillaryViewerUrl) {
+      window.open(_gvMapillaryViewerUrl, '_blank');
+    }
+  };
+  gvBody.addEventListener('click', handleInteractive);
+  gvActions.addEventListener('click', handleInteractive);
+  _gvDelegatedListenerBound = true;
 }
 
 // ============================================
@@ -56,6 +79,9 @@ export async function openGroundView(lat, lon, name = '', context = {}) {
   const body = document.getElementById('gv-body');
   const actions = document.getElementById('gv-actions');
   const badge = document.getElementById('gv-provider-badge');
+
+  _gvCurrentLat = lat;
+  _gvCurrentLon = lon;
 
   locationName.textContent = name || 'Selected Location';
   coords.textContent = `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
@@ -88,14 +114,6 @@ export async function openGroundView(lat, lon, name = '', context = {}) {
   `;
   badge.textContent = 'GOOGLE STREET VIEW';
   badge.className = 'gv-provider-badge gv-badge-google';
-
-  // Click preview to open interactive mode
-  const previewOverlay = document.getElementById('gv-preview-overlay');
-  const svBtn = document.getElementById('gv-btn-streetview');
-
-  const openInteractive = () => showInteractiveStreetView(lat, lon, body, badge);
-  previewOverlay?.addEventListener('click', openInteractive);
-  svBtn?.addEventListener('click', openInteractive);
 
   // Phase 2: Check if Google Street View actually has coverage
   // The static image returns a gray "no imagery" placeholder when unavailable
@@ -220,6 +238,7 @@ async function tryMapillary(lat, lon) {
 }
 
 function showMapillaryResult(result, body, badge, actions, lat, lon) {
+  _gvMapillaryViewerUrl = result.viewerUrl || null;
   if (result.available && result.thumbUrl) {
     // Show actual Mapillary image
     const dateStr = result.capturedAt ? new Date(result.capturedAt).toLocaleDateString() : '';
@@ -234,9 +253,7 @@ function showMapillaryResult(result, body, badge, actions, lat, lon) {
         </div>
       </div>
     `;
-    document.getElementById('gv-mapillary-open')?.addEventListener('click', () => {
-      window.open(result.viewerUrl, '_blank');
-    });
+    // Mapillary open is handled by delegated listener on gv-body via #gv-mapillary-open
   } else {
     body.innerHTML = `
       <div class="gv-fallback-container">

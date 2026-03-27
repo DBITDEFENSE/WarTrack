@@ -33,6 +33,7 @@ import { initSettings } from './ui/settings.js';
 import { initGroundView, openGroundView } from './ui/ground-view.js';
 import { getState, setState, subscribe } from './store.js';
 import { emit, on } from './event-bus.js';
+import { trackInterval, trackSubscription, cleanup } from './utils/lifecycle.js';
 
 // Cesium Ion token — free tier
 Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI0YWMxMWEyMi01Y2QzLTRkNjQtOGZiZi0yNjA1M2I5MmMwYjMiLCJpZCI6MjY1MTM4LCJpYXQiOjE3MzUzMjUxNTJ9.r0OHLB0jVaFEuyOJMhGsG-KBoyXQFMCMBiPBNn9xdYo';
@@ -354,13 +355,13 @@ async function init() {
     setupLongPress(viewer);
 
     // Listen for settings changes to apply maxAircraft + refreshRate dynamically
-    on('settings:change', (s) => {
+    trackSubscription(on('settings:change', (s) => {
       // Max aircraft is read by flights.js on next update cycle
       if (s.maxAircraft) {
         setState('maxCivilian', parseInt(s.maxAircraft) || 1500);
         window._wartracMaxCivilian = parseInt(s.maxAircraft) || 1500;
       }
-    });
+    }), 'settings:change');
 
     // Init auth, favorites, market, cinematic, alerts
     await initAuth();
@@ -375,7 +376,7 @@ async function init() {
     const layersLoaded = { flights: false, vessels: false, satellites: false };
 
     // When user toggles a layer ON, fetch data if not yet loaded
-    on('layer:activated', (detail) => {
+    trackSubscription(on('layer:activated', (detail) => {
       const layer = detail?.layer;
       if (layer === 'flights' && !layersLoaded.flights) {
         layersLoaded.flights = true;
@@ -390,10 +391,10 @@ async function init() {
         // Satellites init already fetches TLEs — just propagate
         updateSatellites(viewer);
       }
-    });
+    }), 'layer:activated');
 
     // Replay frame listener — update all layers from snapshot data
-    on('replay:frame', (snapshot) => {
+    trackSubscription(on('replay:frame', (snapshot) => {
       if (!snapshot) return;
       renderFlightsFromSnapshot(snapshot, viewer);
       renderVesselsFromSnapshot(snapshot, viewer);
@@ -401,37 +402,37 @@ async function init() {
       if (snapshot.hexCells) {
         renderJammingFromSnapshot(snapshot.hexCells, viewer);
       }
-    });
+    }), 'replay:frame');
 
     // Return to live — clear replay entities, restore live data
-    on('replay:end', () => {
+    trackSubscription(on('replay:end', () => {
       clearReplayFlights(viewer);
       clearReplayVessels(viewer);
       // Trigger live data refresh
       if (layersLoaded.flights) updateFlights(viewer);
       if (layersLoaded.vessels) updateVessels(viewer);
-    });
+    }), 'replay:end');
 
     // Update stats periodically
-    setInterval(updateStats, 3000);
+    trackInterval('stats-update', updateStats, 3000);
 
     // Refresh active layers every 60 seconds (skip during replay)
-    setInterval(() => {
+    trackInterval('layer-refresh', () => {
       if (isReplayMode()) return;
       if (layersLoaded.flights) updateFlights(viewer);
       if (layersLoaded.vessels) updateVessels(viewer);
     }, 60000);
 
     // Propagate satellite positions every 10 seconds (only if loaded)
-    setInterval(() => {
+    trackInterval('satellite-propagation', () => {
       if (!isReplayMode() && layersLoaded.satellites) updateSatellites(viewer);
     }, 10000);
 
     // GPS jamming layer update every 60 seconds (ADSB-X mode only)
-    setInterval(() => { if (!isReplayMode()) updateJamming(viewer); }, 60000);
+    trackInterval('jamming-update', () => { if (!isReplayMode()) updateJamming(viewer); }, 60000);
 
     // Auto-refresh news every 30 minutes (clears cache, re-fetches)
-    setInterval(async () => {
+    trackInterval('news-refresh', async () => {
       try {
         const hotspots = getHotspots();
         for (const hs of hotspots) clearCache(hs.name);
@@ -441,14 +442,14 @@ async function init() {
     }, 30 * 60 * 1000);
 
     // Correlation engine — runs every 15 seconds, fuses all layer data
-    setInterval(() => {
+    trackInterval('correlator', () => {
       if (!isReplayMode()) runCorrelation(viewer);
     }, 15000);
     // First correlation after data loads
     setTimeout(() => runCorrelation(viewer), 5000);
 
     // Event detection + position snapshots — every 60 seconds
-    setInterval(() => {
+    trackInterval('event-snapshot', () => {
       const flightDS = viewer.dataSources.getByName('flights')[0];
       const vesselDS = viewer.dataSources.getByName('vessels')[0];
       if (flightDS && vesselDS) {
@@ -526,6 +527,9 @@ async function init() {
         }
       });
     });
+
+    // Clean up all tracked intervals, timeouts, and subscriptions on page unload
+    window.addEventListener('beforeunload', cleanup);
 
     // Reset view button — returns globe to default position without affecting layers
     document.getElementById('btn-reset-view')?.addEventListener('click', () => {
