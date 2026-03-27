@@ -1,3 +1,10 @@
+/**
+ * @module thermal
+ * @description Thermal view layer — applies a white-hot FLIR / thermal optic post-processing
+ * effect to the Cesium globe. Desaturates and dims base tiles, adds a green-tint overlay
+ * and vignette, and switches tracked objects (flights, satellites) to white-hot rendering.
+ */
+
 // ============================================
 // THERMAL VIEW — White-Hot FLIR / Thermal Optic Mode
 // Globe stays visible with readable labels and borders
@@ -7,11 +14,16 @@ import { appState } from '../main.js';
 import { setFlightsThermal } from './flights.js';
 import { setSatellitesThermal } from './satellites.js';
 
+/** @type {boolean} Whether thermal mode is currently active */
 let thermalActive = false;
 
 // ============================================
 // INIT
 // ============================================
+/**
+ * Initialize the thermal layer by creating the color overlay DOM element.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ */
 export function initThermal(viewer) {
   const overlay = document.createElement('div');
   overlay.id = 'thermal-color-overlay';
@@ -22,6 +34,13 @@ export function initThermal(viewer) {
 // ============================================
 // TOGGLE THERMAL VIEW
 // ============================================
+/**
+ * Toggle thermal (white-hot FLIR) view on or off. Adjusts globe tile layers,
+ * atmosphere settings, overlay elements, and tracked-object rendering.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ * @param {boolean} active - Whether to enable (true) or disable (false) thermal mode
+ * @returns {Promise<void>}
+ */
 export async function toggleThermal(viewer, active) {
   thermalActive = active;
   appState.thermalActive = active;
@@ -122,4 +141,5 @@ export async function toggleThermal(viewer, active) {
   viewer.scene.requestRender();
 }
 
+/** @type {boolean} Exported reactive flag indicating whether thermal mode is active */
 export { thermalActive };

@@ -1,9 +1,28 @@
+/**
+ * @module hotspots
+ * @description Hotspots layer — visualizes conflict zones on the Cesium globe with pulsing
+ * animated billboards (SMIL-based SVG) and translucent ellipse overlays showing zone radius.
+ * Each hotspot has a severity level that controls color and size.
+ */
+
 // ============================================
 // HOTSPOTS LAYER — Conflict Zone Visualization
 // Static ellipses + animated billboard for pulse effect (perf-friendly)
 // ============================================
 
+/**
+ * @typedef {Object} Hotspot
+ * @property {string} name - Display name of the conflict zone
+ * @property {number} lat - Latitude in degrees
+ * @property {number} lon - Longitude in degrees
+ * @property {string} severity - Threat level: 'high', 'elevated', or 'watch'
+ * @property {string} summary - Brief description of the situation
+ * @property {string} searchQuery - Search terms for news/social content fetching
+ */
+
+/** @type {Cesium.CustomDataSource|null} */
 let dataSource = null;
+/** @type {number} Current icon scale multiplier, adjusted by wartrack-icon-resize events */
 let hotspotIconScale = 1.0;
 
 // Listen for icon resize events
@@ -19,6 +38,7 @@ window.addEventListener('wartrack-icon-resize', (e) => {
   window.viewer?.scene?.requestRender();
 });
 
+/** @type {Hotspot[]} Static list of monitored conflict zones */
 const hotspots = [
   { name: "Ukraine Front", lat: 48.5, lon: 31.2, severity: "high", summary: "Active conflict, eastern front", searchQuery: "Ukraine war Russia" },
   { name: "Taiwan Strait", lat: 23.5, lon: 120.0, severity: "elevated", summary: "PLA naval exercises ongoing", searchQuery: "Taiwan China PLA military" },
@@ -29,13 +49,19 @@ const hotspots = [
   { name: "North Korea DMZ", lat: 38.3, lon: 127.0, severity: "watch", summary: "Monitoring zone", searchQuery: "North Korea DPRK missile" }
 ];
 
+/** @constant {Object<string, string>} Hex color mapping for each severity level */
 const SEVERITY_COLORS = {
   high: '#ff3344',
   elevated: '#ffaa00',
   watch: '#ffdd44'
 };
 
-// Create a pulsing ring sprite with CSS animation baked into an animated SVG
+/**
+ * Create an animated SVG data-URI of concentric pulsing rings using SMIL animation.
+ * GPU-rendered with no JS callbacks needed.
+ * @param {string} severity - 'high', 'elevated', or 'watch'
+ * @returns {string} Data URI of the animated SVG
+ */
 function createPulseDot(severity) {
   const color = SEVERITY_COLORS[severity] || '#ffdd44';
   // SVG with SMIL animation for pulse — renders on GPU, no JS callback needed
@@ -66,7 +92,7 @@ function createPulseDot(severity) {
   `)}`;
 }
 
-// Also add a static zone ring via ellipse for geographic scale
+/** @constant {Object<string, number>} Ellipse semi-axis radius in meters per severity level */
 const ZONE_RADIUS = {
   high: 150000,
   elevated: 200000,
@@ -76,6 +102,11 @@ const ZONE_RADIUS = {
 // ============================================
 // INIT
 // ============================================
+/**
+ * Initialize the hotspots layer. Creates the data source and adds a pulsing billboard
+ * and translucent ellipse zone for each conflict hotspot.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ */
 export function initHotspots(viewer) {
   dataSource = new Cesium.CustomDataSource('hotspots');
   viewer.dataSources.add(dataSource);
@@ -130,10 +161,18 @@ export function initHotspots(viewer) {
 // ============================================
 // VISIBILITY
 // ============================================
+/**
+ * Toggle visibility of the hotspots layer.
+ * @param {boolean} v - Whether the layer should be visible
+ */
 export function setHotspotsVisible(v) {
   dataSource.show = v;
 }
 
+/**
+ * Get the static list of all monitored conflict hotspots.
+ * @returns {Hotspot[]}
+ */
 export function getHotspots() {
   return hotspots;
 }

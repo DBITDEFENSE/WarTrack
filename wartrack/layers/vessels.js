@@ -1,13 +1,46 @@
+/**
+ * @module vessels
+ * @description Vessels layer — AIS ship tracking with type-classified SVG silhouettes
+ * rendered on a CesiumJS globe. Supports real AIS data via server proxy with
+ * fallback to procedurally generated sample vessels along major shipping lanes.
+ */
+
+/**
+ * @typedef {Object} VesselData
+ * @property {string} mmsi - Maritime Mobile Service Identity
+ * @property {string} [name] - Ship name
+ * @property {number} lat - Latitude in degrees
+ * @property {number} lon - Longitude in degrees
+ * @property {number} [heading] - True heading in degrees
+ * @property {number} [cog] - Course over ground in degrees
+ * @property {number} [speed] - Speed over ground in knots
+ * @property {number} [shipType] - AIS ship type code (0-99)
+ * @property {string} [destination] - Reported destination
+ * @property {string} [flag] - Two-letter country code
+ */
+
+/**
+ * @typedef {Object} ShipClassInfo
+ * @property {string} color - Hex color for rendering
+ * @property {string} label - Human-readable ship type label
+ * @property {number} size - Base icon size in pixels
+ */
+
 // ============================================
 // VESSELS LAYER — AIS Ship Tracking
 // ============================================
 
 import { appState, updateStats } from '../main.js';
 import { apiUrl } from '../config.js';
+import { dedupFetch } from '../utils/dedup-fetch.js';
 
+/** @type {Map<string, Cesium.Entity>} Active vessel entities keyed by MMSI or generated ID */
 let vesselEntities = new Map();
+/** @type {Cesium.CustomDataSource|null} Cesium data source for all vessel entities */
 let dataSource = null;
+/** @type {boolean} Whether the vessels layer is currently visible */
 let visible = true;
+/** @type {number} Current icon scale factor, adjustable via resize events */
 let vesselIconScale = 1.0;
 
 // Listen for icon resize events
@@ -25,6 +58,10 @@ window.addEventListener('wartrack-icon-resize', (e) => {
 // ============================================
 // VESSEL CLASSIFICATION — AIS ship type codes → icon + color
 // ============================================
+/**
+ * @constant {Object<string, ShipClassInfo>}
+ * Ship type classification map. Maps category keys to color, label, and icon size.
+ */
 const SHIP_TYPES = {
   CONTAINER:  { color: '#0088ff', label: 'CONTAINER', size: 16 },
   BULK:       { color: '#3377cc', label: 'BULK CARRIER', size: 16 },
@@ -43,6 +80,11 @@ const SHIP_TYPES = {
   OTHER:      { color: '#6688aa', label: 'VESSEL', size: 12 }
 };
 
+/**
+ * Classifies a numeric AIS ship type code into a ShipClassInfo category.
+ * @param {number|string|null} shipType - AIS ship type code (0-99)
+ * @returns {ShipClassInfo} Matching ship class info object
+ */
 function classifyShipType(shipType) {
   if (!shipType) return SHIP_TYPES.OTHER;
   const t = Number(shipType);
@@ -73,6 +115,11 @@ function classifyShipType(shipType) {
 // ============================================
 // VESSEL SVG SILHOUETTES — top-down, 24x24 viewBox, bow pointing up
 // ============================================
+/**
+ * @constant {Object<string, function(string): string>}
+ * SVG path generators for each ship type. Each function takes a hex color
+ * and returns SVG markup for a 24x24 top-down silhouette with bow pointing up.
+ */
 const VESSEL_SHAPES = {
   // Container ship — rectangular with stacked containers
   CONTAINER: (c) => `<path d="M12 2 L14 4 L14 7 L15 7 L15 17 L14 17 L14 19 L12 20 L10 19 L10 17 L9 17 L9 7 L10 7 L10 4 Z" fill="${c}" opacity="0.9"/><line x1="9.5" y1="9" x2="14.5" y2="9" stroke="${c}" stroke-width="0.4" opacity="0.5"/><line x1="9.5" y1="12" x2="14.5" y2="12" stroke="${c}" stroke-width="0.4" opacity="0.5"/><line x1="9.5" y1="15" x2="14.5" y2="15" stroke="${c}" stroke-width="0.4" opacity="0.5"/>`,
@@ -120,8 +167,14 @@ const VESSEL_SHAPES = {
   OTHER: (c) => `<path d="M12 3 L13.5 6 L14 9 L14 16 L13 18 L12 19 L11 18 L10 16 L10 9 L10.5 6 Z" fill="${c}" opacity="0.8"/>`,
 };
 
+/** @type {Map<string, string>} Cache of generated SVG data URIs keyed by "label-color" */
 const vesselIconCache = new Map();
 
+/**
+ * Generates (or retrieves from cache) an SVG data URI for a ship class.
+ * @param {ShipClassInfo} shipClass - Ship classification info
+ * @returns {string} SVG data URI
+ */
 function createShipSvg(shipClass) {
   const key = `${shipClass.label}-${shipClass.color}`;
   if (vesselIconCache.has(key)) return vesselIconCache.get(key);
@@ -137,6 +190,10 @@ function createShipSvg(shipClass) {
 // ============================================
 // INIT
 // ============================================
+/**
+ * Initializes the vessels layer by creating the Cesium data source.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ */
 export function initVessels(viewer) {
   dataSource = new Cesium.CustomDataSource('vessels');
   dataSource.show = false; // hidden until user enables
@@ -147,12 +204,18 @@ export function initVessels(viewer) {
 // FETCH & UPDATE — Uses proxy for AISHub/MarineTraffic-like data
 // We use a simplified approach via proxy returning AIS data
 // ============================================
+/**
+ * Fetches vessel data from server proxy and creates/updates Cesium entities.
+ * Falls back to sample data if the API returns nothing.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ * @returns {Promise<void>}
+ */
 export async function updateVessels(viewer) {
   if (!dataSource) return; // not initialized yet
   try {
     let vessels = [];
     try {
-      const resp = await fetch(apiUrl(`/api/vessels`));
+      const resp = await dedupFetch(apiUrl(`/api/vessels`));
       vessels = await resp.json();
     } catch {
       // ignored
@@ -221,6 +284,11 @@ export async function updateVessels(viewer) {
 // ============================================
 // SAMPLE DATA (when proxy not available)
 // ============================================
+/**
+ * Generates procedural sample vessels along major global shipping lanes.
+ * Used as fallback when the AIS proxy is unavailable.
+ * @returns {VesselData[]} Array of sample vessel objects
+ */
 function generateSampleVessels() {
   const lanes = [
     // Primary chokepoints — coordinates tightened to actual water areas
@@ -286,6 +354,10 @@ function generateSampleVessels() {
 // ============================================
 // VISIBILITY
 // ============================================
+/**
+ * Sets visibility of the entire vessels data source.
+ * @param {boolean} v - Whether to show vessels
+ */
 export function setVesselsVisible(v) {
   visible = v;
   dataSource.show = v;

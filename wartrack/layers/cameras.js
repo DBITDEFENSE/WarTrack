@@ -1,3 +1,10 @@
+/**
+ * @module cameras
+ * @description Public cameras layer — renders live webcam feeds from the Windy Webcams API
+ * as billboard entities on the Cesium globe. Only fetches/shows markers when zoomed in
+ * below a threshold altitude. Click a marker for detail + preview.
+ */
+
 // ============================================
 // PUBLIC CAMERAS LAYER — Live webcam feeds via Windy Webcams API
 // Only shows markers when zoomed in. Click for detail + preview.
@@ -5,12 +12,38 @@
 
 import { appState } from '../main.js';
 import { apiUrl } from '../config.js';
+import { dedupFetch } from '../utils/dedup-fetch.js';
 
+/**
+ * @typedef {Object} CameraData
+ * @property {string} id - Unique camera identifier
+ * @property {string} title - Human-readable camera name
+ * @property {string} category - Classified category key (e.g. 'traffic', 'airport')
+ * @property {string} categoryLabel - Display label for the category
+ * @property {number} lat - Latitude in degrees
+ * @property {number} lon - Longitude in degrees
+ * @property {string|null} thumbnailUrl - Preview image URL
+ * @property {string|null} playerUrl - Embeddable player/stream URL
+ * @property {string|null} sourceUrl - Link to the camera's detail page
+ * @property {string} city - City name
+ * @property {string} region - Region/state name
+ * @property {string} country - Country name
+ * @property {string} status - Camera status (e.g. 'active')
+ * @property {string|null} lastUpdated - ISO timestamp of last update
+ * @property {number|null} viewCount - Total views
+ */
+
+/** @type {Cesium.CustomDataSource|null} Cesium data source for camera entities */
 let dataSource = null;
+/** @type {Map<string, Cesium.Entity>} Map of camera ID to Cesium entity */
 let cameraEntities = new Map();
+/** @type {boolean} Whether the camera layer is toggled visible */
 let visible = true;
+/** @type {string|null} Bounding-box key of the last successful fetch to avoid duplicate requests */
 let lastFetchBbox = null;
+/** @type {boolean} Cooldown flag to throttle fetch requests */
 let fetchCooldown = false;
+/** @type {number} Current icon scale multiplier, adjusted by wartrack-icon-resize events */
 let camIconScale = 1.0;
 
 // Listen for icon resize events
@@ -24,10 +57,13 @@ window.addEventListener('wartrack-icon-resize', (e) => {
   window.viewer?.scene?.requestRender();
 });
 
-// Camera zoom threshold — only fetch/show cameras when camera altitude < this
+/** @constant {number} Camera altitude threshold in km — cameras are only fetched/shown below this altitude */
 const ZOOM_THRESHOLD_KM = 8000; // increased so cameras appear sooner when zooming in
 
-// Categories for filtering
+/**
+ * @constant {Object<string, {color: string, label: string}>}
+ * Camera category definitions mapping category key to display color and label.
+ */
 const CAMERA_CATEGORIES = {
   traffic: { color: '#ffaa00', label: 'TRAFFIC' },
   airport: { color: '#00ddff', label: 'AIRPORT' },
@@ -41,6 +77,11 @@ const CAMERA_CATEGORIES = {
 // ============================================
 // CAMERA ICON
 // ============================================
+/**
+ * Generate an SVG data-URI icon for a camera category.
+ * @param {string} category - Category key from CAMERA_CATEGORIES
+ * @returns {string} Data URI of the SVG icon
+ */
 function createCameraIcon(category) {
   const cat = CAMERA_CATEGORIES[category] || CAMERA_CATEGORIES.other;
   const c = cat.color;
@@ -54,7 +95,14 @@ function createCameraIcon(category) {
   `)}`;
 }
 
+/** @type {Map<string, string>} Cache of category -> SVG data URI to avoid regenerating icons */
 const iconCache = new Map();
+
+/**
+ * Return a cached camera icon for the given category, creating it if needed.
+ * @param {string} category - Category key
+ * @returns {string} Data URI of the SVG icon
+ */
 function getCachedIcon(category) {
   if (iconCache.has(category)) return iconCache.get(category);
   const icon = createCameraIcon(category);
@@ -65,6 +113,11 @@ function getCachedIcon(category) {
 // ============================================
 // CLASSIFY CATEGORY from Windy categories array
 // ============================================
+/**
+ * Classify a Windy Webcams categories array into one of our internal category keys.
+ * @param {Array<string|{id: string}>} categories - Raw categories from the API
+ * @returns {string} Internal category key (e.g. 'traffic', 'airport', 'other')
+ */
 function classifyCategory(categories) {
   if (!categories || !Array.isArray(categories)) return 'other';
   const cats = categories.map(c => (typeof c === 'string' ? c : c.id || '').toLowerCase());
@@ -80,6 +133,11 @@ function classifyCategory(categories) {
 // ============================================
 // INIT
 // ============================================
+/**
+ * Initialize the cameras layer. Creates the data source and attaches a camera-move
+ * listener that triggers fetches when zoomed in below the threshold.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ */
 export function initCameras(viewer) {
   dataSource = new Cesium.CustomDataSource('cameras');
   viewer.dataSources.add(dataSource);
@@ -100,6 +158,12 @@ export function initCameras(viewer) {
 // ============================================
 // FETCH CAMERAS FOR CURRENT VIEW
 // ============================================
+/**
+ * Fetch webcam data from the server for the current viewport bounding box.
+ * Skips if on cooldown or the bbox hasn't changed since the last fetch.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ * @returns {Promise<void>}
+ */
 async function fetchCamerasForView(viewer) {
   if (fetchCooldown) return;
 
@@ -123,7 +187,7 @@ async function fetchCamerasForView(viewer) {
   setTimeout(() => { fetchCooldown = false; }, 3000); // 3s cooldown between fetches
 
   try {
-    const resp = await fetch(apiUrl(`/api/cameras?bbox=${north},${east},${south},${west}`));
+    const resp = await dedupFetch(apiUrl(`/api/cameras?bbox=${north},${east},${south},${west}`));
     if (!resp.ok) return;
     const data = await resp.json();
 
@@ -141,6 +205,11 @@ async function fetchCamerasForView(viewer) {
 // ============================================
 // RENDER CAMERA ENTITIES
 // ============================================
+/**
+ * Render webcam entities on the globe. Adds new cameras and prunes excess
+ * off-screen entities to keep the total under 500.
+ * @param {Array<Object>} webcams - Array of webcam objects from the API
+ */
 function renderCameras(webcams) {
   const activeIds = new Set();
 
@@ -235,6 +304,10 @@ function renderCameras(webcams) {
 // ============================================
 // VISIBILITY
 // ============================================
+/**
+ * Toggle visibility of the cameras layer.
+ * @param {boolean} v - Whether the layer should be visible
+ */
 export function setCamerasVisible(v) {
   visible = v;
   if (!v) {
@@ -251,6 +324,9 @@ export function setCamerasVisible(v) {
 // ============================================
 // CLEAR ALL
 // ============================================
+/**
+ * Remove all camera entities from the globe and reset internal state.
+ */
 export function clearCameras() {
   dataSource.entities.removeAll();
   cameraEntities.clear();

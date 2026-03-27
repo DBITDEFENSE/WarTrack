@@ -1,3 +1,10 @@
+/**
+ * @module events
+ * Simple anomaly detection engine for WarTrack.
+ * Compares rolling data snapshots to detect unusual patterns such as
+ * military aircraft spikes, traffic surges, vessel drops, and correlated escalations.
+ */
+
 // ============================================
 // EVENT DETECTION — Simple anomaly detection engine
 // Compares current data snapshots to detect unusual patterns
@@ -5,14 +12,50 @@
 
 import { getHotspots } from './hotspots.js';
 
+/**
+ * @typedef {Object} Alert
+ * @property {string} id - Unique alert identifier (e.g. "alert-1711234567890-ab3f")
+ * @property {string} type - Alert type code (MIL_SPIKE, TRAFFIC_SURGE, VESSEL_DROP, CORRELATED_ESCALATION, ROUTE_AVOIDANCE, JAMMING_DETECTED, OSINT_ALERT)
+ * @property {'critical'|'high'|'elevated'} severity - Alert severity level
+ * @property {string} region - Region/hotspot name or 'Global'
+ * @property {string} description - Human-readable alert description
+ * @property {number} lat - Latitude of the alert origin
+ * @property {number} lon - Longitude of the alert origin
+ * @property {number} timestamp - Alert creation time (epoch ms)
+ */
+
+/**
+ * @typedef {Object} RegionSnapshot
+ * @property {number} flights - Total flights near the region
+ * @property {number} military - Military flights near the region
+ * @property {number} vessels - Vessels near the region
+ */
+
+/**
+ * @typedef {Object} Snapshot
+ * @property {number} timestamp - Snapshot capture time (epoch ms)
+ * @property {number} totalFlights - Global flight entity count
+ * @property {number} totalVessels - Global vessel entity count
+ * @property {Object<string, RegionSnapshot>} regions - Per-region entity counts
+ */
+
+/** @type {Alert[]} Rolling list of active alerts, newest first */
 let alerts = [];
+
+/** @type {Snapshot[]} Rolling window of entity-count snapshots for baseline computation */
 let snapshots = []; // rolling window of entity counts per region
+
+/** @constant {number} Maximum number of snapshots retained for baseline averaging */
 const MAX_SNAPSHOTS = 10;
+
+/** @constant {number} Maximum number of alerts retained in the alerts list */
 const ALERT_MAX = 20;
 
 // ============================================
 // JAMMING ALERT LISTENER
 // ============================================
+
+/** @type {number} Timestamp of the last jamming alert, for 5-minute dedup throttle */
 let lastJammingAlert = 0;
 window.addEventListener('wartrack-jamming-update', (e) => {
   const { highCells, moderateCells, totalCells } = e.detail || {};
@@ -31,8 +74,18 @@ window.addEventListener('wartrack-jamming-update', (e) => {
 // ============================================
 // OSINT ALERT — triggered when social content has conflict keywords
 // ============================================
+
+/** @constant {RegExp} Pattern matching conflict-related keywords in OSINT article titles */
 const CONFLICT_KEYWORDS = /\b(strike|explosion|attack|missile|bombing|military operation|escalation|invasion|airstrike|shelling|ceasefire broken)\b/i;
 
+/**
+ * Checks a list of OSINT items for conflict-keyword matches and raises an alert
+ * if two or more articles match.
+ * @param {Array<{title: string}>} items - OSINT/news items to scan
+ * @param {string} regionName - The region these items relate to
+ * @param {number} lat - Latitude for the alert
+ * @param {number} lon - Longitude for the alert
+ */
 export function checkOsintAlert(items, regionName, lat, lon) {
   if (!items || items.length === 0) return;
   const matches = items.filter(i => CONFLICT_KEYWORDS.test(i.title || ''));
@@ -51,6 +104,13 @@ export function checkOsintAlert(items, regionName, lat, lon) {
 // ============================================
 // TAKE SNAPSHOT — called each data refresh cycle
 // ============================================
+
+/**
+ * Captures a snapshot of current entity counts per hotspot region and runs
+ * anomaly detection against the rolling baseline. Called each data refresh cycle.
+ * @param {Map} flightEntities - Map of flight entity IDs to Cesium entities with acData
+ * @param {Map} vesselEntities - Map of vessel entity IDs to Cesium entities with vesselData
+ */
 export function takeSnapshot(flightEntities, vesselEntities) {
   const hotspots = getHotspots();
   const snapshot = {
@@ -97,6 +157,14 @@ export function takeSnapshot(flightEntities, vesselEntities) {
 // ============================================
 // DETECTION RULES
 // ============================================
+
+/**
+ * Runs anomaly detection rules against the current snapshot. Compares entity
+ * counts to the rolling baseline and fires alerts for spikes, surges, drops,
+ * correlated escalations, and route avoidance patterns.
+ * Requires at least 3 prior snapshots for a meaningful baseline.
+ * @param {Snapshot} current - The most recent data snapshot
+ */
 function detectAnomalies(current) {
   if (snapshots.length < 3) return; // need baseline
 
@@ -174,6 +242,10 @@ function detectAnomalies(current) {
   }
 }
 
+/**
+ * Computes a rolling baseline by averaging all snapshots except the most recent.
+ * @returns {Object<string, {flights: number, military: number, vessels: number}>} Average counts per region
+ */
 function computeBaseline() {
   const baseline = {};
   const count = Math.max(snapshots.length - 1, 1); // exclude current
@@ -192,6 +264,13 @@ function computeBaseline() {
 // ============================================
 // ALERT MANAGEMENT
 // ============================================
+
+/**
+ * Adds an alert to the alerts list with deduplication. Alerts of the same
+ * type and region are suppressed for 5 minutes. Dispatches a 'wartrack-alert'
+ * CustomEvent for UI consumption.
+ * @param {Omit<Alert, 'id'|'timestamp'>} alert - Alert data without id/timestamp (auto-generated)
+ */
 function addAlert(alert) {
   // Deduplicate: don't repeat same alert type+region within 5 minutes
   const recent = alerts.find(a =>
@@ -209,14 +288,26 @@ function addAlert(alert) {
   window.dispatchEvent(new CustomEvent('wartrack-alert', { detail: alert }));
 }
 
+/**
+ * Returns the full list of active alerts, newest first.
+ * @returns {Alert[]}
+ */
 export function getAlerts() {
   return alerts;
 }
 
+/**
+ * Removes an alert by its unique id.
+ * @param {string} id - The alert id to dismiss
+ */
 export function dismissAlert(id) {
   alerts = alerts.filter(a => a.id !== id);
 }
 
+/**
+ * Returns the count of alerts from the last 30 minutes.
+ * @returns {number}
+ */
 export function getAlertCount() {
   // Only count alerts from last 30 minutes
   const cutoff = Date.now() - 1800000;

@@ -1,3 +1,10 @@
+/**
+ * @module news
+ * @description News layer — fetches geo-linked news articles per hotspot, caches them,
+ * and renders "NEWS" pin entities on the Cesium globe. Provides helpers for
+ * time formatting and severity coloring used by the UI panels.
+ */
+
 // ============================================
 // NEWS LAYER — Geo-linked news pins + data fetch
 // Fetches on-demand, caches per hotspot, renders map pins
@@ -5,17 +12,41 @@
 
 import { NEWS_CACHE_TTL, NEWS_MAX_ARTICLES, NEWS_FETCH_DELAY } from '../config.js';
 import { apiUrl } from '../config.js';
+import { dedupFetch } from '../utils/dedup-fetch.js';
 
+/**
+ * @typedef {Object} NewsArticle
+ * @property {string} title - Article headline
+ * @property {string} [description] - Article summary
+ * @property {string} [url] - Link to the full article
+ * @property {string} [publishedAt] - ISO timestamp of publication
+ * @property {{name: string}} [source] - Source outlet info
+ * @property {string} hotspot - Name of the associated hotspot
+ * @property {number} lat - Hotspot latitude
+ * @property {number} lon - Hotspot longitude
+ * @property {string} severity - Hotspot severity level
+ * @property {boolean} isStateAdjacent - Whether the source is a state-adjacent outlet
+ */
+
+/** @type {Object<string, {articles: NewsArticle[], timestamp: number}>} Per-hotspot article cache */
 const NEWS_CACHE = {};
 window._newsCacheRef = NEWS_CACHE; // expose for correlator
+/** @type {Cesium.CustomDataSource|null} */
 let dataSource = null;
 
-// State-adjacent outlets that get a warning indicator
+/**
+ * @constant {string[]} List of state-adjacent media outlet names that receive a warning indicator.
+ */
 const STATE_ADJACENT = ['TASS', 'Xinhua', 'RT', 'Sputnik', 'CGTN', 'Global Times', 'Press TV', 'KCNA'];
 
 // ============================================
 // CACHE HELPERS
 // ============================================
+/**
+ * Retrieve cached articles for a hotspot if still within TTL.
+ * @param {string} name - Hotspot name
+ * @returns {{articles: NewsArticle[], timestamp: number}|null}
+ */
 function getCached(name) {
   const cached = NEWS_CACHE[name];
   if (!cached) return null;
@@ -23,16 +54,30 @@ function getCached(name) {
   return cached;
 }
 
+/**
+ * Store articles in the cache for a hotspot.
+ * @param {string} name - Hotspot name
+ * @param {NewsArticle[]} articles - Articles to cache
+ */
 function setCached(name, articles) {
   NEWS_CACHE[name] = { articles, timestamp: Date.now() };
 }
 
+/**
+ * Get the age of a cached entry in milliseconds.
+ * @param {string} name - Hotspot name
+ * @returns {number|null} Age in ms, or null if not cached
+ */
 export function getCacheAge(name) {
   const cached = NEWS_CACHE[name];
   if (!cached) return null;
   return Date.now() - cached.timestamp;
 }
 
+/**
+ * Clear the news cache for a specific hotspot, or all hotspots if no name given.
+ * @param {string} [name] - Hotspot name; omit to clear entire cache
+ */
 export function clearCache(name) {
   if (name) {
     delete NEWS_CACHE[name];
@@ -44,12 +89,18 @@ export function clearCache(name) {
 // ============================================
 // FETCH NEWS FOR A SINGLE HOTSPOT
 // ============================================
+/**
+ * Fetch news articles for a single hotspot. Returns cached data when available.
+ * Marks articles from state-adjacent outlets with a flag.
+ * @param {{name: string, searchQuery?: string, lat: number, lon: number, severity: string}} hotspot
+ * @returns {Promise<NewsArticle[]>}
+ */
 export async function fetchNewsForHotspot(hotspot) {
   const cached = getCached(hotspot.name);
   if (cached) return cached.articles;
 
   try {
-    const resp = await fetch(apiUrl(`/api/news?q=${encodeURIComponent(hotspot.searchQuery || hotspot.name)}&max=${NEWS_MAX_ARTICLES}`));
+    const resp = await dedupFetch(apiUrl(`/api/news?q=${encodeURIComponent(hotspot.searchQuery || hotspot.name)}&max=${NEWS_MAX_ARTICLES}`));
     if (!resp.ok) {
       console.warn(`News fetch failed for ${hotspot.name}: ${resp.status}`);
       return [];
@@ -77,6 +128,12 @@ export async function fetchNewsForHotspot(hotspot) {
 // ============================================
 // FETCH NEWS FOR ALL HOTSPOTS (sequential with delay)
 // ============================================
+/**
+ * Fetch news for all hotspots sequentially with a delay between uncached requests.
+ * Returns all articles sorted by publish date descending.
+ * @param {Array<Object>} hotspots - Array of hotspot objects
+ * @returns {Promise<NewsArticle[]>}
+ */
 export async function fetchAllNews(hotspots) {
   const allArticles = [];
   for (let i = 0; i < hotspots.length; i++) {
@@ -95,6 +152,10 @@ export async function fetchAllNews(hotspots) {
 // ============================================
 // NEWS PIN ICON
 // ============================================
+/**
+ * Create a canvas-based amber circle icon with an "N" letter for news pins.
+ * @returns {string} Base64 data URL of the icon
+ */
 function createNewsPinIcon() {
   const c = document.createElement('canvas');
   c.width = 20;
@@ -114,11 +175,18 @@ function createNewsPinIcon() {
   return c.toDataURL();
 }
 
+/** @type {string|null} Cached news pin icon data URL */
 let pinIcon = null;
 
 // ============================================
 // INIT — add news pins to globe
 // ============================================
+/**
+ * Initialize the news layer. Creates the data source and adds a news pin
+ * entity near each hotspot.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ * @param {Array<Object>} hotspots - Array of hotspot objects to place pins for
+ */
 export function initNews(viewer, hotspots) {
   dataSource = new Cesium.CustomDataSource('news');
   viewer.dataSources.add(dataSource);
@@ -168,6 +236,10 @@ export function initNews(viewer, hotspots) {
 // ============================================
 // VISIBILITY
 // ============================================
+/**
+ * Toggle visibility of news pin entities.
+ * @param {boolean} v - Whether the layer should be visible
+ */
 export function setNewsVisible(v) {
   if (dataSource) dataSource.show = v;
 }
@@ -175,6 +247,11 @@ export function setNewsVisible(v) {
 // ============================================
 // TIME AGO HELPER
 // ============================================
+/**
+ * Convert an ISO date string to a human-readable relative time string.
+ * @param {string} dateStr - ISO date string
+ * @returns {string} Relative time (e.g. '5 min ago', '2hr ago', '3d ago')
+ */
 export function timeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
@@ -189,11 +266,21 @@ export function timeAgo(dateStr) {
 // ============================================
 // SEVERITY COLOR HELPER
 // ============================================
+/**
+ * Return a colored emoji dot for a severity level.
+ * @param {string} severity - 'high', 'elevated', or 'watch'
+ * @returns {string} Emoji dot character
+ */
 export function severityDot(severity) {
   const colors = { high: '🔴', elevated: '🟠', watch: '🟡' };
   return colors[severity] || '⚪';
 }
 
+/**
+ * Return a hex color string for a severity level.
+ * @param {string} severity - 'high', 'elevated', or 'watch'
+ * @returns {string} CSS hex color
+ */
 export function severityColor(severity) {
   return { high: '#ff3344', elevated: '#ffaa00', watch: '#ffdd44' }[severity] || '#888';
 }

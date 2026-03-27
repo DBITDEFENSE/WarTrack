@@ -1,3 +1,10 @@
+/**
+ * @module jamming
+ * GPS jamming / interference layer for WarTrack.
+ * Renders a hex-grid (H3) visualization of inferred GPS degradation.
+ * Dual-source: ADSB-X (real NACp/NIC/SIL) or OpenSky (heuristic baro/geo altitude divergence).
+ */
+
 // ============================================
 // GPS JAMMING / INTERFERENCE LAYER
 // Hex-grid visualization of inferred GPS degradation
@@ -7,15 +14,62 @@
 import { appState, updateStats } from '../main.js';
 import { pushSnapshot } from '../data/snapshot-store.js';
 import { apiUrl } from '../config.js';
+import { dedupFetch } from '../utils/dedup-fetch.js';
 
+/**
+ * @typedef {Object} ScoredAircraft
+ * @property {string} icao24 - ICAO 24-bit transponder address
+ * @property {number} lat - Latitude
+ * @property {number} lon - Longitude
+ * @property {number|null} baroAlt - Barometric altitude (meters)
+ * @property {number|null} geoAlt - Geometric/GPS altitude (meters)
+ * @property {number|null} velocity - Ground speed
+ * @property {number|null} heading - Track heading
+ * @property {number} score - Composite anomaly score (0-1)
+ * @property {'normal'|'low'|'moderate'|'high'} severity - Classified severity
+ * @property {string[]} indicators - List of triggered heuristic codes
+ */
+
+/**
+ * @typedef {Object} HexCell
+ * @property {number} count - Number of scored aircraft in the cell
+ * @property {number} totalScore - Sum of all aircraft scores
+ * @property {number} maxScore - Highest individual aircraft score
+ * @property {string} maxSeverity - Highest severity label in the cell
+ * @property {ScoredAircraft[]} aircraft - Aircraft contributing to this cell
+ * @property {number} [avgScore] - Average score (computed after aggregation)
+ * @property {'normal'|'low'|'moderate'|'high'} [severity] - Final cell severity
+ */
+
+/**
+ * @typedef {Object} JammingStats
+ * @property {number} totalCells - Total rendered hex cells
+ * @property {number} highCells - Cells at 'high' severity
+ * @property {number} moderateCells - Cells at 'moderate' severity
+ */
+
+/** @type {Cesium.CustomDataSource|null} Cesium data source for hex polygons */
 let dataSource = null;
+
+/** @type {Map<string, Cesium.Entity>} Active hex cell entities keyed by H3 index */
 let hexEntities = new Map();
+
+/** @type {boolean} Whether the jamming layer is currently visible */
 let visible = false; // off by default
+
+/** @type {'adsbx'|'opensky'} Active data source mode */
 let dataSourceMode = 'opensky'; // 'adsbx' or 'opensky'
+
+/** @type {Map<string, {lat: number, lon: number, timestamp: number}>} Previous positions for jump detection, keyed by icao24 */
 let previousPositions = new Map(); // for position-jump detection
+
+/** @type {JammingStats} Current jamming statistics */
 let jammingStats = { totalCells: 0, highCells: 0, moderateCells: 0 };
 
-// Color scale for hex cells
+/**
+ * @constant {Object<string, {fill: string, outline: string, label: string}>}
+ * Color scale for hex cell severity rendering (CSS color strings with alpha).
+ */
 const HEX_COLORS = {
   normal:   { fill: '#00ff8860', outline: '#00ff88cc', label: 'NORMAL' },
   low:      { fill: '#ffdd4470', outline: '#ffdd44cc', label: 'LOW' },
@@ -26,6 +80,12 @@ const HEX_COLORS = {
 // ============================================
 // INIT
 // ============================================
+
+/**
+ * Initializes the jamming layer. Creates the Cesium data source, checks for
+ * ADSB-X availability, and registers a listener for flight data updates.
+ * @param {Cesium.Viewer} viewer - The Cesium viewer instance
+ */
 export async function initJamming(viewer) {
   dataSource = new Cesium.CustomDataSource('jamming');
   viewer.dataSources.add(dataSource);
@@ -56,6 +116,13 @@ export async function initJamming(viewer) {
 // ============================================
 // AIRCRAFT SCORING
 // ============================================
+
+/**
+ * Scores a single aircraft for GPS anomaly indicators using heuristics:
+ * baro/geo altitude divergence, position jumps, and missing geo altitude.
+ * @param {Array} state - OpenSky state vector (positional array)
+ * @returns {ScoredAircraft|null} Scored result, or null if aircraft is on ground or missing position
+ */
 function scoreAircraft(state) {
   const icao24 = (state[0] || '').toUpperCase();
   const lat = state[6];
@@ -121,6 +188,11 @@ function scoreAircraft(state) {
   };
 }
 
+/**
+ * Maps a numeric anomaly score to a severity label.
+ * @param {number} score - Anomaly score (0-1)
+ * @returns {'normal'|'low'|'moderate'|'high'} Severity classification
+ */
 function classifySeverity(score) {
   if (score >= 0.6) return 'high';
   if (score >= 0.3) return 'moderate';
@@ -131,6 +203,13 @@ function classifySeverity(score) {
 // ============================================
 // H3 HEX AGGREGATION
 // ============================================
+
+/**
+ * Returns the H3 resolution to use. Fixed at 4 (~22km edge) to avoid
+ * visual flicker from resolution changes that destroy and recreate entities.
+ * @param {Cesium.Viewer} viewer - The Cesium viewer (unused, kept for future dynamic resolution)
+ * @returns {number} H3 resolution level
+ */
 function getResolution(viewer) {
   // Fixed resolution 4 (~22km edge) — avoids flicker from resolution changes
   // Resolution changes destroy all hex entities and recreate with new H3 indices,
@@ -138,6 +217,13 @@ function getResolution(viewer) {
   return 4;
 }
 
+/**
+ * Aggregates scored aircraft into H3 hex cells. Computes per-cell average/max
+ * scores and classifies severity, boosting if many aircraft are affected.
+ * @param {ScoredAircraft[]} scoredAircraft - Aircraft with anomaly scores
+ * @param {number} resolution - H3 resolution level
+ * @returns {Map<string, HexCell>} Map of H3 index to aggregated cell data
+ */
 function aggregateToHex(scoredAircraft, resolution) {
   const cells = new Map();
 
@@ -179,6 +265,14 @@ function aggregateToHex(scoredAircraft, resolution) {
 // ============================================
 // PROCESS FLIGHT DATA → SCORE → AGGREGATE → RENDER
 // ============================================
+
+/**
+ * Main processing pipeline: scores all aircraft, aggregates into hex cells,
+ * filters for meaningful signals, renders polygons, updates stats, and
+ * pushes a snapshot for replay.
+ * @param {Array<Array>} states - Raw OpenSky state vectors
+ * @param {Cesium.Viewer} viewer - The Cesium viewer instance
+ */
 function processFlightData(states, viewer) {
   if (!states || !visible) return;
 
@@ -238,6 +332,14 @@ function processFlightData(states, viewer) {
 // ============================================
 // HEX CELL RENDERING
 // ============================================
+
+/**
+ * Renders or updates hex cell polygons on the Cesium data source.
+ * Creates new entities for new H3 indices, updates colors for existing ones,
+ * and removes stale cells no longer present.
+ * @param {Map<string, HexCell>} cells - Current hex cells to render
+ * @param {Cesium.Viewer} viewer - The Cesium viewer instance
+ */
 function renderHexCells(cells, viewer) {
   dataSource.entities.suspendEvents();
 
@@ -295,6 +397,12 @@ function renderHexCells(cells, viewer) {
 // ============================================
 // REPLAY — render from snapshot data
 // ============================================
+
+/**
+ * Renders jamming hex cells from a previously saved snapshot (for replay mode).
+ * @param {Array<{h3Index: string, avgScore: number, count: number, severity: string}>} snapshotHexCells - Saved hex cell data
+ * @param {Cesium.Viewer} viewer - The Cesium viewer instance
+ */
 export function renderFromSnapshot(snapshotHexCells, viewer) {
   if (!dataSource) return;
   const cells = new Map();
@@ -307,6 +415,13 @@ export function renderFromSnapshot(snapshotHexCells, viewer) {
 // ============================================
 // UPDATE (called by main.js interval — for ADSB-X mode)
 // ============================================
+
+/**
+ * Periodic update function called by main.js. In OpenSky mode this is a no-op
+ * (data arrives via events). In ADSB-X mode, fetches aircraft quality data
+ * directly and scores using NACp/NIC/SIL values.
+ * @param {Cesium.Viewer} viewer - The Cesium viewer instance
+ */
 export async function updateJamming(viewer) {
   if (!visible) return;
 
@@ -315,7 +430,7 @@ export async function updateJamming(viewer) {
 
   // ADSB-X mode: fetch quality data directly
   try {
-    const resp = await fetch(apiUrl('/api/adsbx'));
+    const resp = await dedupFetch(apiUrl('/api/adsbx'));
     const data = await resp.json();
     if (!data.aircraft || !data.available) return;
 
@@ -374,6 +489,12 @@ export async function updateJamming(viewer) {
 // ============================================
 // VISIBILITY
 // ============================================
+
+/**
+ * Toggles the jamming layer visibility. When turned on, dispatches a
+ * 'wartrack-jamming-request' event to trigger an immediate data refresh.
+ * @param {boolean} v - Whether the layer should be visible
+ */
 export function setJammingVisible(v) {
   visible = v;
   dataSource.show = v;
@@ -386,6 +507,11 @@ export function setJammingVisible(v) {
 // ============================================
 // STATS
 // ============================================
+
+/**
+ * Returns the current jamming statistics summary.
+ * @returns {JammingStats}
+ */
 export function getJammingStats() {
   return jammingStats;
 }

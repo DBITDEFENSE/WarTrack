@@ -1,18 +1,62 @@
+/**
+ * @module satellites
+ * @description Satellites layer — live satellite tracking using CelesTrak TLE data
+ * and satellite.js SGP4 propagation. Renders orbital positions, trails, and
+ * sensor coverage cones on a CesiumJS globe.
+ */
+
+/**
+ * @typedef {Object} SatelliteRecord
+ * @property {Object} satrec - satellite.js SGP4 satellite record from TLE
+ * @property {string} name - Satellite name from TLE line 0
+ * @property {string} category - Category key (ISS, MILITARY, GPS, STARLINK, OTHER)
+ * @property {Cesium.Entity|null} entity - Associated Cesium billboard entity
+ */
+
+/**
+ * @typedef {Object} SatellitePosition
+ * @property {number} longitude - Geodetic longitude in degrees
+ * @property {number} latitude - Geodetic latitude in degrees
+ * @property {number} altitude - Altitude above sea level in meters
+ * @property {number} velocity - Orbital velocity magnitude in km/s
+ */
+
+/**
+ * @typedef {Object} SatCategoryInfo
+ * @property {string} color - Hex color for rendering
+ * @property {number} size - Base icon size in pixels
+ * @property {boolean} label - Whether to show a text label
+ * @property {boolean} trail - Whether to render an orbital trail
+ * @property {number} priority - Render priority (lower = higher priority)
+ */
+
 // ============================================
 // SATELLITES LAYER — Live satellite tracking via CelesTrak TLE + satellite.js
 // ============================================
 
 import { appState, updateStats } from '../main.js';
 import { apiUrl } from '../config.js';
+import { dedupFetch } from '../utils/dedup-fetch.js';
 
+/** @type {Cesium.CustomDataSource|null} Cesium data source for all satellite entities */
 let dataSource = null;
+/** @type {Map<string, SatelliteRecord>} Parsed satellite records keyed by NORAD catalog ID */
 let satRecords = new Map();
+/** @type {Map<string, Cesium.Entity>} Orbital trail polyline entities keyed by NORAD ID */
 let trailEntities = new Map();
-let coverageEntities = new Map(); // cone/footprint entities
+/** @type {Map<string, Cesium.Entity[]>} Coverage cone/footprint entities keyed by NORAD ID */
+let coverageEntities = new Map();
+/** @type {boolean} Whether the satellites layer is currently visible */
 let visible = true;
+/** @type {boolean} Whether TLE data has been loaded and initial render completed */
 let loaded = false;
-let coverageVisible = true; // toggle for coverage visualization
+/** @type {boolean} Whether coverage cone visualization is enabled */
+let coverageVisible = true;
 
+/**
+ * @constant {Object<string, SatCategoryInfo>}
+ * Display configuration per satellite category: color, size, label, trail, priority.
+ */
 const SAT_CATEGORIES = {
   ISS:      { color: '#00ff88', size: 28, label: true, trail: true, priority: 1 },
   MILITARY: { color: '#ff3344', size: 14, label: true, trail: true, priority: 2 },
@@ -22,7 +66,9 @@ const SAT_CATEGORIES = {
   OTHER:    { color: '#666688', size: 5,  label: false, trail: false, priority: 6 },
 };
 
+/** @constant {number} Maximum number of Starlink satellites to render */
 const STARLINK_CAP = 1500;
+/** @type {number} Current icon scale factor, adjustable via resize events */
 let satIconScale = 1.0;
 
 // Listen for icon resize
@@ -41,6 +87,12 @@ window.addEventListener('wartrack-icon-resize', (e) => {
 // ============================================
 // SVG ICON GENERATOR
 // ============================================
+/**
+ * Generates an SVG data URI for a satellite dot icon with glow.
+ * @param {string} color - Hex color string
+ * @param {number} size - Icon dimensions in pixels
+ * @returns {string} SVG data URI
+ */
 function createSatIcon(color, size) {
   const r = Math.max(size / 4, 2);
   return `data:image/svg+xml,${encodeURIComponent(`
@@ -51,6 +103,10 @@ function createSatIcon(color, size) {
   `)}`;
 }
 
+/**
+ * Generates a detailed SVG data URI for the ISS with solar panel outlines.
+ * @returns {string} SVG data URI (32x32)
+ */
 function createISSIcon() {
   return `data:image/svg+xml,${encodeURIComponent(`
     <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
@@ -64,7 +120,13 @@ function createISSIcon() {
   `)}`;
 }
 
+/** @type {Map<string, string>} Cache of satellite icon data URIs keyed by category name */
 const iconCache = new Map();
+/**
+ * Returns a cached icon data URI for the given satellite category.
+ * @param {string} category - Category key (e.g. 'ISS', 'MILITARY', 'STARLINK')
+ * @returns {string} SVG data URI
+ */
 function getCachedIcon(category) {
   if (iconCache.has(category)) return iconCache.get(category);
   const cat = SAT_CATEGORIES[category] || SAT_CATEGORIES.OTHER;
@@ -76,6 +138,12 @@ function getCachedIcon(category) {
 // ============================================
 // TLE PARSING
 // ============================================
+/**
+ * Parses raw TLE text (3-line format) into structured satellite objects.
+ * @param {string} tleText - Raw TLE text with name/line1/line2 triplets
+ * @param {string} category - Default category to assign (e.g. 'MILITARY', 'GPS')
+ * @returns {Array<{name:string, line1:string, line2:string, noradId:string, category:string}>}
+ */
 function parseTLE(tleText, category) {
   const lines = tleText.trim().split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const sats = [];
@@ -90,6 +158,11 @@ function parseTLE(tleText, category) {
   return sats;
 }
 
+/**
+ * Refines a satellite's category based on NORAD ID and name.
+ * @param {{noradId:string, name:string, category:string}} sat - Parsed satellite info
+ * @returns {string} Refined category key
+ */
 function classifyCategory(sat) {
   if (sat.noradId === '25544') return 'ISS';
   if (sat.name.startsWith('STARLINK')) return 'STARLINK';
@@ -99,6 +172,12 @@ function classifyCategory(sat) {
 // ============================================
 // POSITION PROPAGATION
 // ============================================
+/**
+ * Propagates a satellite's position using SGP4 for a given date.
+ * @param {Object} satrec - satellite.js SGP4 record
+ * @param {Date} date - Target propagation time
+ * @returns {SatellitePosition|null} Geodetic position or null on propagation failure
+ */
 function propagatePosition(satrec, date) {
   try {
     const pv = satellite.propagate(satrec, date);
@@ -119,6 +198,12 @@ function propagatePosition(satrec, date) {
 // ============================================
 // INIT
 // ============================================
+/**
+ * Initializes the satellites layer. Creates the data source and listens for
+ * layer activation to lazily load TLE data.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ * @returns {Promise<void>}
+ */
 export async function initSatellites(viewer) {
   dataSource = new Cesium.CustomDataSource('satellites');
   viewer.dataSources.add(dataSource);
@@ -132,6 +217,12 @@ export async function initSatellites(viewer) {
   });
 }
 
+/**
+ * Fetches TLE data for all satellite groups, parses them, and triggers initial render.
+ * Starlink satellites are capped at STARLINK_CAP.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ * @returns {Promise<void>}
+ */
 async function loadTLEs(viewer) {
   if (loaded) return;
   const groups = [
@@ -143,7 +234,7 @@ async function loadTLEs(viewer) {
 
   for (const group of groups) {
     try {
-      const resp = await fetch(apiUrl(`/api/tle?group=${group.name}`));
+      const resp = await dedupFetch(apiUrl(`/api/tle?group=${group.name}`));
       if (!resp.ok) continue;
       const text = await resp.text();
       const sats = parseTLE(text, group.category);
@@ -173,6 +264,10 @@ async function loadTLEs(viewer) {
 // ============================================
 // RENDER — create entities for all parsed satellites
 // ============================================
+/**
+ * Creates Cesium entities for all parsed satellites: billboards, labels, trails, and coverage cones.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ */
 function renderSatellites(viewer) {
   const now = new Date();
   dataSource.entities.suspendEvents();
@@ -244,6 +339,12 @@ function renderSatellites(viewer) {
 // ============================================
 // ORBITAL TRAIL — compute forward/backward path
 // ============================================
+/**
+ * Computes and renders a +/-15 minute orbital trail polyline for a satellite.
+ * @param {string} noradId - NORAD catalog ID
+ * @param {SatelliteRecord} rec - Satellite record with SGP4 data
+ * @param {string} color - Hex color for the trail glow
+ */
 function createOrbitalTrail(noradId, rec, color) {
   const positions = [];
   const now = Date.now();
@@ -277,6 +378,14 @@ function createOrbitalTrail(noradId, rec, color) {
 // ============================================
 // COVERAGE CONE — tight directional sensor footprint
 // ============================================
+/**
+ * Creates a sensor coverage visualization: ground footprint ellipse, beam lines,
+ * center beam, and rotating scan icon.
+ * @param {string} noradId - NORAD catalog ID
+ * @param {SatellitePosition} pos - Current satellite position
+ * @param {string} color - Hex color for the coverage elements
+ * @param {Cesium.Cartesian3} satPos - Satellite position in Cesium coordinates
+ */
 function createCoverageCone(noradId, pos, color, satPos) {
   const altKm = pos.altitude / 1000;
   // Realistic sensor footprint: ~0.8× altitude in km as radius
@@ -367,7 +476,12 @@ function createCoverageCone(noradId, pos, color, satPos) {
   coverageEntities.set(noradId, entities);
 }
 
-// Animated scanning icon — 3 radial lines that rotate
+/**
+ * Generates an animated scanning icon SVG with 3 radial lines and a sweep arc.
+ * @param {string} color - Hex color for the scan lines
+ * @param {number} radius - Footprint radius in meters (used for context, not directly in SVG)
+ * @returns {string} SVG data URI (64x64)
+ */
 function createScanIcon(color, radius) {
   return `data:image/svg+xml,${encodeURIComponent(`
     <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
@@ -386,6 +500,10 @@ function createScanIcon(color, radius) {
 // ============================================
 // COVERAGE TOGGLE
 // ============================================
+/**
+ * Toggles visibility of all satellite coverage cone/footprint entities.
+ * @param {boolean} v - Whether to show coverage cones
+ */
 export function setCoverageVisible(v) {
   coverageVisible = v;
   for (const [noradId, entities] of coverageEntities) {
@@ -399,6 +517,10 @@ export function setCoverageVisible(v) {
 // ============================================
 // UPDATE — re-propagate positions
 // ============================================
+/**
+ * Re-propagates all satellite positions to the current time and updates entities.
+ * @param {Cesium.Viewer} viewer - The CesiumJS viewer instance
+ */
 export function updateSatellites(viewer) {
   if (!loaded) return;
   const now = new Date();
@@ -423,6 +545,10 @@ export function updateSatellites(viewer) {
 // ============================================
 // VISIBILITY
 // ============================================
+/**
+ * Sets visibility of the entire satellites data source.
+ * @param {boolean} v - Whether to show satellites
+ */
 export function setSatellitesVisible(v) {
   visible = v;
   dataSource.show = v;
@@ -431,6 +557,10 @@ export function setSatellitesVisible(v) {
 // ============================================
 // THERMAL MODE
 // ============================================
+/**
+ * Toggles thermal (IR) display mode: swaps all satellite icons to uniform white dots.
+ * @param {boolean} active - Whether thermal mode is active
+ */
 export function setSatellitesThermal(active) {
   const thermalIcon = createSatIcon('#ffffff', 8);
   for (const [noradId, rec] of satRecords) {

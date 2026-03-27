@@ -1,3 +1,9 @@
+/**
+ * @module correlator
+ * Cross-layer intelligence fusion engine. Aggregates flights, vessels, jamming,
+ * news, and satellites into per-region threat assessments every 15 seconds.
+ */
+
 // ============================================
 // CORRELATOR — Cross-layer intelligence fusion engine
 // Aggregates flights, vessels, jamming, news, satellites
@@ -7,15 +13,47 @@
 import { appState } from '../main.js';
 import { getHotspots } from './hotspots.js';
 
+/**
+ * @typedef {Object} RegionAssessment
+ * @property {string} name - Hotspot/region display name
+ * @property {number} lat - Region center latitude
+ * @property {number} lon - Region center longitude
+ * @property {string} baseSeverity - Hotspot base severity from hotspots config
+ * @property {number} milAircraftCount - Military aircraft in region
+ * @property {number} civAircraftCount - Civilian aircraft in region
+ * @property {number} totalAircraftCount - All aircraft in region
+ * @property {number} vesselCount - AIS vessel count in region
+ * @property {number} jammingCells - Number of GPS jamming hex cells
+ * @property {number} jammingAvgScore - Average jamming score (0-1)
+ * @property {number} satCount - Surveillance satellites overhead
+ * @property {number} newsCount - Recent OSINT/news article count
+ * @property {Array} recentNews - Recent news article references
+ * @property {'GREEN'|'YELLOW'|'ORANGE'|'RED'} threatLevel - Classified threat level
+ * @property {number} compositeScore - Weighted composite threat score (0-1)
+ * @property {string[]} signals - Human-readable evidence strings
+ * @property {number} timestamp - Assessment generation time (epoch ms)
+ */
+
 // ============================================
 // REGION STATE — live intelligence picture per hotspot
 // ============================================
+
+/** @type {Map<string, RegionAssessment>} Live intelligence map keyed by hotspot name */
 let regionIntel = new Map(); // hotspot.name → RegionAssessment
+
+/** @type {number} Timestamp of the last correlation run */
 let lastCorrelation = 0;
+
+/** @constant {number} Minimum interval between correlation runs in milliseconds */
 const CORRELATION_INTERVAL = 15000; // 15 seconds
+
+/** @constant {number} Approximate radius in degrees (~550km) for capturing entities near a region */
 const REGION_RADIUS_DEG = 5; // ~550km radius for region capture
 
-// Severity weights for composite scoring
+/**
+ * @constant {Object<string, number>} Severity weights for composite threat scoring.
+ * Each key maps a signal category to its weight in the final score (0-1).
+ */
 const WEIGHTS = {
   milAircraft:  0.25,  // military aircraft density
   jammingScore: 0.30,  // GPS interference severity
@@ -28,6 +66,12 @@ const WEIGHTS = {
 // ============================================
 // REGION ASSESSMENT STRUCTURE
 // ============================================
+
+/**
+ * Creates a blank RegionAssessment for a given hotspot.
+ * @param {Object} hotspot - Hotspot definition with name, lat, lon, severity
+ * @returns {RegionAssessment} Initialized assessment with zeroed counters
+ */
 function createAssessment(hotspot) {
   return {
     name: hotspot.name,
@@ -55,6 +99,16 @@ function createAssessment(hotspot) {
 // ============================================
 // DISTANCE CHECK (degrees, rough)
 // ============================================
+
+/**
+ * Checks whether an entity falls within the rectangular region around a hotspot.
+ * Uses a simple bounding-box check in degrees (not great-circle distance).
+ * @param {number} entityLat - Entity latitude
+ * @param {number} entityLon - Entity longitude
+ * @param {number} regionLat - Region center latitude
+ * @param {number} regionLon - Region center longitude
+ * @returns {boolean} True if the entity is within REGION_RADIUS_DEG of the center
+ */
 function inRegion(entityLat, entityLon, regionLat, regionLon) {
   const dlat = Math.abs(entityLat - regionLat);
   const dlon = Math.abs(entityLon - regionLon);
@@ -64,6 +118,14 @@ function inRegion(entityLat, entityLon, regionLat, regionLon) {
 // ============================================
 // CORE CORRELATION — called every 15s
 // ============================================
+
+/**
+ * Runs the cross-layer correlation engine. Gathers entity data from all Cesium
+ * data sources (flights, vessels, jamming, satellites), scores each hotspot region,
+ * and dispatches a 'wartrack-correlation' CustomEvent with the results.
+ * Throttled to run at most once per CORRELATION_INTERVAL.
+ * @param {Cesium.Viewer} viewer - The Cesium viewer instance with loaded data sources
+ */
 export function runCorrelation(viewer) {
   const now = Date.now();
   if (now - lastCorrelation < CORRELATION_INTERVAL) return;
@@ -237,6 +299,11 @@ export function runCorrelation(viewer) {
 // ============================================
 // NEWS COUNT HELPER — reads from cached news layer
 // ============================================
+
+/**
+ * Reads article counts per region from the global news cache.
+ * @returns {Object<string, number>} Map of region name to article count
+ */
 function getNewsCounts() {
   const counts = {};
   // Access the news cache via the global NEWS_CACHE if available
@@ -251,14 +318,28 @@ function getNewsCounts() {
 // ============================================
 // PUBLIC API
 // ============================================
+
+/**
+ * Returns the full region intelligence map.
+ * @returns {Map<string, RegionAssessment>} All current region assessments keyed by name
+ */
 export function getRegionIntel() {
   return regionIntel;
 }
 
+/**
+ * Retrieves the assessment for a single region by name.
+ * @param {string} regionName - The hotspot/region name to look up
+ * @returns {RegionAssessment|null} The assessment, or null if not found
+ */
 export function getRegionAssessment(regionName) {
   return regionIntel.get(regionName) || null;
 }
 
+/**
+ * Returns a compact summary of threat levels for all regions.
+ * @returns {Object<string, {level: string, score: number, signals: number}>} Threat level per region
+ */
 export function getAllThreatLevels() {
   const levels = {};
   for (const [name, assessment] of regionIntel) {
@@ -271,7 +352,11 @@ export function getAllThreatLevels() {
   return levels;
 }
 
-// Get structured data for Nexus AI context
+/**
+ * Returns structured intelligence context for a region, formatted for Nexus AI consumption.
+ * @param {string} regionName - The region to retrieve context for
+ * @returns {Object|null} Flattened intel object with formatted scores, or null if unavailable
+ */
 export function getIntelContextForRegion(regionName) {
   const a = regionIntel.get(regionName);
   if (!a) return null;
@@ -290,7 +375,11 @@ export function getIntelContextForRegion(regionName) {
   };
 }
 
-// Get all regions summary for briefing
+/**
+ * Returns a global briefing summary of all regions with meaningful threat activity.
+ * Filters to regions with compositeScore > 0.2 and sorts descending by score.
+ * @returns {Array<{region: string, threatLevel: string, score: string, milAircraft: number, vessels: number, jammingCells: number, topSignal: string}>}
+ */
 export function getGlobalIntelSummary() {
   const summary = [];
   for (const [name, a] of regionIntel) {
