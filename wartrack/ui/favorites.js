@@ -4,6 +4,7 @@
 
 import { isAuthenticated, getAuthHeaders } from './auth.js';
 import { apiUrl } from '../config.js';
+import { on } from '../event-bus.js';
 
 let favorites = [];
 let panelEl, bodyEl;
@@ -30,8 +31,8 @@ export function initFavorites() {
   });
 
   // Listen for auth changes
-  window.addEventListener('wartrack-auth-change', (e) => {
-    if (e.detail.user) {
+  on('auth:change', (data) => {
+    if (data.user) {
       loadFavorites();
     } else {
       favorites = [];

@@ -11,6 +11,7 @@
 // ============================================
 
 import { getHotspots } from './hotspots.js';
+import { emit, on } from '../event-bus.js';
 import {
   matchesConflictKeywords,
   shouldDedup as shouldDedupAlert,
@@ -63,8 +64,8 @@ const ALERT_MAX = 20;
 
 /** @type {number} Timestamp of the last jamming alert, for 5-minute dedup throttle */
 let lastJammingAlert = 0;
-window.addEventListener('wartrack-jamming-update', (e) => {
-  const { highCells, moderateCells, totalCells } = e.detail || {};
+on('jamming:update', (detail) => {
+  const { highCells, moderateCells, totalCells } = detail || {};
   if (highCells > 0 && Date.now() - lastJammingAlert > 300000) {
     lastJammingAlert = Date.now();
     addAlert({
@@ -220,7 +221,8 @@ function detectAnomalies(current) {
     // Rule 4: CORRELATED ESCALATION — mil spike + GPS jamming in same region
     // Uses correlation engine data if available
     try {
-      const intel = window._getRegionIntel?.()?.get?.(hs.name);
+      const { getRegionIntel } = await import('./correlator.js');
+      const intel = getRegionIntel()?.get?.(hs.name);
       if (intel && intel.compositeScore >= 0.6 && intel.milAircraftCount >= 5 && intel.jammingCells > 0) {
         addAlert({
           type: 'CORRELATED_ESCALATION',
@@ -276,7 +278,7 @@ function addAlert(alert) {
   if (alerts.length > ALERT_MAX) alerts.pop();
 
   // Dispatch event for UI
-  window.dispatchEvent(new CustomEvent('wartrack-alert', { detail: alert }));
+  emit('alert:new', alert);
 }
 
 /**

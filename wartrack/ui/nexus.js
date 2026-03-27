@@ -4,6 +4,7 @@
 // ============================================
 
 import { apiUrl } from '../config.js';
+import { getRegionIntel, getGlobalIntelSummary } from '../layers/correlator.js';
 let panelEl, messagesEl, inputEl;
 let viewer = null;
 let conversation = []; // { role: 'user'|'nexus', text, location? }
@@ -78,8 +79,8 @@ async function submitQuery() {
     // Gather live intelligence context from correlation engine
     let liveContext = null;
     try {
-      const summary = window._getGlobalIntelSummary?.() || [];
-      const regionIntel = window._getRegionIntel?.();
+      const summary = getGlobalIntelSummary() || [];
+      const regionIntel = getRegionIntel();
       liveContext = {
         globalSummary: summary.slice(0, 5), // top 5 threat regions
         totalFlights: document.getElementById('count-flights')?.textContent || '0',

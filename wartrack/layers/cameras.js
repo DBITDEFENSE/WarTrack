@@ -13,6 +13,7 @@
 import { appState } from '../main.js';
 import { apiUrl } from '../config.js';
 import { dedupFetch } from '../utils/dedup-fetch.js';
+import { on } from '../event-bus.js';
 
 /**
  * @typedef {Object} CameraData
@@ -47,9 +48,9 @@ let fetchCooldown = false;
 let camIconScale = 1.0;
 
 // Listen for icon resize events
-window.addEventListener('wartrack-icon-resize', (e) => {
-  if (e.detail.layer !== 'cameras') return;
-  camIconScale = e.detail.scale;
+on('icon:resize', (detail) => {
+  if (detail.layer !== 'cameras') return;
+  camIconScale = detail.scale;
   for (const [id, entity] of cameraEntities) {
     entity.billboard.width = 20 * camIconScale;
     entity.billboard.height = 20 * camIconScale;

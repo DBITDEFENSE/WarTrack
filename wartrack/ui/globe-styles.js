@@ -83,7 +83,7 @@ export function initGlobeStyles(v) {
   });
 }
 
-function applyGlobeStyle(styleKey) {
+async function applyGlobeStyle(styleKey) {
   const style = GLOBE_STYLES[styleKey];
   if (!style || !viewer) return;
 
@@ -122,9 +122,10 @@ function applyGlobeStyle(styleKey) {
     labelLayer.saturation = style.labels.saturation;
   }
 
-  // Update global refs for thermal.js
-  window._baseTileLayer = baseLayer;
-  window._labelTileLayer = labelLayer;
+  // Update store refs for thermal.js and settings.js
+  const { setState } = await import('../store.js');
+  setState('baseTileLayer', baseLayer);
+  setState('labelTileLayer', labelLayer);
 
   // Globe color
   viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString(style.globeColor);

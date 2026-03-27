@@ -30,7 +30,9 @@ import { dedupFetch } from '../utils/dedup-fetch.js';
 
 /** @type {Object<string, {articles: NewsArticle[], timestamp: number}>} Per-hotspot article cache */
 const NEWS_CACHE = {};
-window._newsCacheRef = NEWS_CACHE; // expose for correlator
+
+/** @returns {Object} Direct reference to the news cache for correlator */
+export function _getNewsCache() { return NEWS_CACHE; }
 /** @type {Cesium.CustomDataSource|null} */
 let dataSource = null;
 

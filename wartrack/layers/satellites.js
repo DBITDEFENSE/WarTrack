@@ -37,6 +37,7 @@
 import { appState, updateStats } from '../main.js';
 import { apiUrl } from '../config.js';
 import { dedupFetch } from '../utils/dedup-fetch.js';
+import { on } from '../event-bus.js';
 
 /** @type {Cesium.CustomDataSource|null} Cesium data source for all satellite entities */
 let dataSource = null;
@@ -72,9 +73,9 @@ const STARLINK_CAP = 1500;
 let satIconScale = 1.0;
 
 // Listen for icon resize
-window.addEventListener('wartrack-icon-resize', (e) => {
-  if (e.detail.layer !== 'satellites') return;
-  satIconScale = e.detail.scale;
+on('icon:resize', (detail) => {
+  if (detail.layer !== 'satellites') return;
+  satIconScale = detail.scale;
   for (const [noradId, rec] of satRecords) {
     if (!rec.entity) continue;
     const cat = SAT_CATEGORIES[rec.category] || SAT_CATEGORIES.OTHER;
@@ -210,8 +211,8 @@ export async function initSatellites(viewer) {
   dataSource.show = false; // hidden until user enables
 
   // Don't fetch TLEs eagerly — wait for user to toggle layer on
-  window.addEventListener('wartrack-layer-activated', async (e) => {
-    if (e.detail?.layer === 'satellites' && !loaded) {
+  on('layer:activated', async (detail) => {
+    if (detail?.layer === 'satellites' && !loaded) {
       await loadTLEs(viewer);
     }
   });

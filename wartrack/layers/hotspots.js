@@ -20,15 +20,17 @@
  * @property {string} searchQuery - Search terms for news/social content fetching
  */
 
+import { on } from '../event-bus.js';
+
 /** @type {Cesium.CustomDataSource|null} */
 let dataSource = null;
 /** @type {number} Current icon scale multiplier, adjusted by wartrack-icon-resize events */
 let hotspotIconScale = 1.0;
 
 // Listen for icon resize events
-window.addEventListener('wartrack-icon-resize', (e) => {
-  if (e.detail.layer !== 'hotspots' || !dataSource) return;
-  hotspotIconScale = e.detail.scale;
+on('icon:resize', (detail) => {
+  if (detail.layer !== 'hotspots' || !dataSource) return;
+  hotspotIconScale = detail.scale;
   for (const entity of dataSource.entities.values) {
     if (entity.billboard) {
       entity.billboard.width = 48 * hotspotIconScale;

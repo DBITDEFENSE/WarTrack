@@ -11,7 +11,9 @@
 // ============================================
 
 import { appState } from '../main.js';
+import { emit } from '../event-bus.js';
 import { getHotspots } from './hotspots.js';
+import { _getNewsCache } from './news.js';
 import { inRegion, createAssessment, computeThreatScore, WEIGHTS, REGION_RADIUS_DEG } from './correlator-logic.js';
 
 /**
@@ -174,9 +176,7 @@ export function runCorrelation(viewer) {
   regionIntel = newIntel;
 
   // Dispatch correlation event for other systems to consume
-  window.dispatchEvent(new CustomEvent('wartrack-correlation', {
-    detail: { regions: Object.fromEntries(regionIntel) }
-  }));
+  emit('correlation:update', { regions: Object.fromEntries(regionIntel) });
 }
 
 // ============================================
@@ -189,9 +189,9 @@ export function runCorrelation(viewer) {
  */
 function getNewsCounts() {
   const counts = {};
-  // Access the news cache via the global NEWS_CACHE if available
-  if (window._newsCacheRef) {
-    for (const [name, cached] of Object.entries(window._newsCacheRef)) {
+  const newsCache = _getNewsCache();
+  if (newsCache) {
+    for (const [name, cached] of Object.entries(newsCache)) {
       counts[name] = cached.articles?.length || 0;
     }
   }

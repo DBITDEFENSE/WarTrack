@@ -5,6 +5,7 @@
 // ============================================
 
 import { apiUrl } from '../config.js';
+import { emit } from '../event-bus.js';
 let clerkInstance = null;
 let currentUser = null;
 
@@ -76,7 +77,7 @@ export async function initAuth() {
           currentUser = null;
         }
         updateHUD();
-        window.dispatchEvent(new CustomEvent('wartrack-auth-change', { detail: { user: currentUser } }));
+        emit('auth:change', { user: currentUser });
       });
 
       console.log('Clerk auth ready', currentUser ? `(${currentUser.username})` : '(signed out)');
@@ -229,7 +230,7 @@ async function logout() {
   localStorage.removeItem('wartrack_token');
   currentUser = null;
   updateHUD();
-  window.dispatchEvent(new CustomEvent('wartrack-auth-change', { detail: { user: null } }));
+  emit('auth:change', { user: null });
 }
 
 // ============================================
@@ -288,7 +289,7 @@ function showFallbackModal(mode = 'signin') {
       currentUser = data.user;
       updateHUD();
       modal.classList.remove('visible');
-      window.dispatchEvent(new CustomEvent('wartrack-auth-change', { detail: { user: currentUser } }));
+      emit('auth:change', { user: currentUser });
     } catch { errorEl.textContent = 'Connection error'; }
   });
 }

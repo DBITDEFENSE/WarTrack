@@ -3,6 +3,7 @@
 // ============================================
 
 import { getAlerts, dismissAlert, getAlertCount } from '../layers/events.js';
+import { on } from '../event-bus.js';
 
 let panelEl, bodyEl;
 let alertSoundsMuted = localStorage.getItem('wartrack-alert-mute') === 'true';
@@ -98,11 +99,11 @@ export function initAlerts(viewer) {
   }
 
   // Listen for new alerts
-  window.addEventListener('wartrack-alert', (e) => {
+  on('alert:new', (data) => {
     updateBadge();
     if (panelEl && !panelEl.classList.contains('hidden')) renderAlerts(viewer);
     // Play notification sound based on severity
-    const severity = e.detail?.severity || 'elevated';
+    const severity = data?.severity || 'elevated';
     playAlertTone(severity);
   });
 

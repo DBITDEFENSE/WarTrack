@@ -15,6 +15,7 @@ import { appState, updateStats } from '../main.js';
 import { pushSnapshot } from '../data/snapshot-store.js';
 import { apiUrl } from '../config.js';
 import { dedupFetch } from '../utils/dedup-fetch.js';
+import { emit, on } from '../event-bus.js';
 
 /**
  * @typedef {Object} ScoredAircraft
@@ -106,9 +107,9 @@ export async function initJamming(viewer) {
   }
 
   // Listen for flight data updates from flights.js
-  window.addEventListener('wartrack-flight-data', (e) => {
+  on('flight:data', (detail) => {
     if (visible) {
-      processFlightData(e.detail.states, viewer);
+      processFlightData(detail.states, viewer);
     }
   });
 }
@@ -311,9 +312,7 @@ function processFlightData(states, viewer) {
 
   // Dispatch event for alerts engine
   if (highCount > 0 || modCount > 0) {
-    window.dispatchEvent(new CustomEvent('wartrack-jamming-update', {
-      detail: { highCells: highCount, moderateCells: modCount, totalCells: cells.size }
-    }));
+    emit('jamming:update', { highCells: highCount, moderateCells: modCount, totalCells: cells.size });
   }
 
   // Push snapshot for replay
@@ -500,7 +499,7 @@ export function setJammingVisible(v) {
   dataSource.show = v;
   // If just turned on, trigger an update from cached flight data
   if (v) {
-    window.dispatchEvent(new CustomEvent('wartrack-jamming-request'));
+    emit('jamming:request');
   }
 }
 

@@ -31,6 +31,8 @@ import { runCorrelation, getRegionIntel, getGlobalIntelSummary } from './layers/
 import { initSocial, setSocialVisible, loadContentForVisibleRegions } from './layers/social.js';
 import { initSettings } from './ui/settings.js';
 import { initGroundView, openGroundView } from './ui/ground-view.js';
+import { getState, setState, subscribe } from './store.js';
+import { emit, on } from './event-bus.js';
 
 // Cesium Ion token — free tier
 Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI0YWMxMWEyMi01Y2QzLTRkNjQtOGZiZi0yNjA1M2I5MmMwYjMiLCJpZCI6MjY1MTM4LCJpYXQiOjE3MzUzMjUxNTJ9.r0OHLB0jVaFEuyOJMhGsG-KBoyXQFMCMBiPBNn9xdYo';
@@ -84,6 +86,8 @@ labelLayer.contrast = 1.0;
 labelLayer.saturation = 0.0;
 
 // Export layers so thermal.js can adjust them independently
+setState('baseTileLayer', baseLayer);
+setState('labelTileLayer', labelLayer);
 window._baseTileLayer = baseLayer;
 window._labelTileLayer = labelLayer;
 
@@ -143,6 +147,7 @@ if (isMobile) {
   // Lower tile detail on mobile for performance
   viewer.scene.globe.maximumScreenSpaceError = 4;
   // Reduce max entities
+  setState('maxCivilian', 500);
   window._wartracMaxCivilian = 500;
 }
 
@@ -162,21 +167,30 @@ viewer.camera.flyTo({
 // ============================================
 export { viewer };
 window.viewer = viewer; // expose for debugging
+setState('viewer', viewer);
 
 // ============================================
-// APP STATE
+// APP STATE — Proxy delegates to centralized store
 // ============================================
-export const appState = {
-  flightCount: 0,
-  militaryCount: 0,
-  vesselCount: 0,
-  satelliteCount: 0,
-  cameraCount: 0,
-  jammingCells: 0,
-  thermalActive: false,
-  lastRefresh: null,
-  proxyBase: ''
+const _appStateMap = {
+  flightCount: 'counts.flights',
+  militaryCount: 'counts.military',
+  vesselCount: 'counts.vessels',
+  satelliteCount: 'counts.satellites',
+  cameraCount: 'counts.cameras',
+  jammingCells: 'counts.jammingCells',
+  thermalActive: 'thermalActive',
+  lastRefresh: 'lastRefresh'
 };
+
+// Backward compatibility — layers still import appState
+export const appState = new Proxy({}, {
+  get: (_, prop) => getState(_appStateMap[prop] || prop),
+  set: (_, prop, value) => {
+    setState(_appStateMap[prop] || prop, value);
+    return true;
+  }
+});
 
 // ============================================
 // STATS UPDATER
@@ -187,9 +201,9 @@ export function updateStats() {
   const refreshEl = document.getElementById('stat-refresh');
   const altEl = document.getElementById('stat-altitude');
 
-  const total = appState.flightCount + appState.vesselCount + appState.satelliteCount;
+  const total = (getState('counts.flights') || 0) + (getState('counts.vessels') || 0) + (getState('counts.satellites') || 0);
   if (totalEl) totalEl.textContent = total.toLocaleString();
-  if (milEl) milEl.textContent = appState.militaryCount.toLocaleString();
+  if (milEl) milEl.textContent = (getState('counts.military') || 0).toLocaleString();
 
   // Global threat level from correlation engine
   const threatEl = document.getElementById('stat-threat');
@@ -206,21 +220,22 @@ export function updateStats() {
   }
 
   const satEl = document.getElementById('stat-satellites');
-  if (satEl) satEl.textContent = appState.satelliteCount.toLocaleString();
+  if (satEl) satEl.textContent = (getState('counts.satellites') || 0).toLocaleString();
 
   const satCount = document.getElementById('count-satellites');
-  if (satCount) satCount.textContent = appState.satelliteCount;
+  if (satCount) satCount.textContent = getState('counts.satellites') || 0;
 
   const camCount = document.getElementById('count-cameras');
-  if (camCount) camCount.textContent = appState.cameraCount || 0;
+  if (camCount) camCount.textContent = getState('counts.cameras') || 0;
 
   const jammingEl = document.getElementById('stat-jamming');
-  if (jammingEl) jammingEl.textContent = appState.jammingCells || 0;
+  if (jammingEl) jammingEl.textContent = getState('counts.jammingCells') || 0;
   const jammingCount = document.getElementById('count-jamming');
-  if (jammingCount) jammingCount.textContent = appState.jammingCells || 0;
+  if (jammingCount) jammingCount.textContent = getState('counts.jammingCells') || 0;
 
-  if (appState.lastRefresh) {
-    const ago = Math.round((Date.now() - appState.lastRefresh) / 1000);
+  const lastRefresh = getState('lastRefresh');
+  if (lastRefresh) {
+    const ago = Math.round((Date.now() - lastRefresh) / 1000);
     refreshEl.textContent = ago < 60 ? `${ago}s AGO` : `${Math.floor(ago / 60)}m AGO`;
   }
 
@@ -230,9 +245,9 @@ export function updateStats() {
   altEl.textContent = `${Number(altKm).toLocaleString()} KM`;
 
   // Update count badges
-  document.getElementById('count-flights').textContent = appState.flightCount;
-  document.getElementById('count-military').textContent = appState.militaryCount;
-  document.getElementById('count-vessels').textContent = appState.vesselCount;
+  document.getElementById('count-flights').textContent = getState('counts.flights') || 0;
+  document.getElementById('count-military').textContent = getState('counts.military') || 0;
+  document.getElementById('count-vessels').textContent = getState('counts.vessels') || 0;
 }
 
 // ============================================
@@ -248,18 +263,18 @@ async function init() {
     initLayerControls({
       onFlightsToggle: (v) => {
         setFlightsVisible(v);
-        if (v) window.dispatchEvent(new CustomEvent('wartrack-layer-activated', { detail: { layer: 'flights' } }));
+        if (v) emit('layer:activated', { layer: 'flights' });
       },
       onMilitaryToggle: (v) => { /* handled inside flights layer */ },
       onVesselsToggle: (v) => {
         setVesselsVisible(v);
-        if (v) window.dispatchEvent(new CustomEvent('wartrack-layer-activated', { detail: { layer: 'vessels' } }));
+        if (v) emit('layer:activated', { layer: 'vessels' });
       },
       onHotspotsToggle: setHotspotsVisible,
       onThermalToggle: (active) => toggleThermal(viewer, active),
       onSatellitesToggle: (v) => {
         setSatellitesVisible(v);
-        if (v) window.dispatchEvent(new CustomEvent('wartrack-layer-activated', { detail: { layer: 'satellites' } }));
+        if (v) emit('layer:activated', { layer: 'satellites' });
       },
       onCoverageToggle: setCoverageVisible,
       onCamerasToggle: setCamerasVisible,
@@ -339,10 +354,10 @@ async function init() {
     }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
 
     // Listen for settings changes to apply maxAircraft + refreshRate dynamically
-    window.addEventListener('wartrack-settings-changed', (e) => {
-      const s = e.detail;
+    on('settings:change', (s) => {
       // Max aircraft is read by flights.js on next update cycle
       if (s.maxAircraft) {
+        setState('maxCivilian', parseInt(s.maxAircraft) || 1500);
         window._wartracMaxCivilian = parseInt(s.maxAircraft) || 1500;
       }
     });
@@ -360,8 +375,8 @@ async function init() {
     const layersLoaded = { flights: false, vessels: false, satellites: false };
 
     // When user toggles a layer ON, fetch data if not yet loaded
-    window.addEventListener('wartrack-layer-activated', (e) => {
-      const layer = e.detail?.layer;
+    on('layer:activated', (detail) => {
+      const layer = detail?.layer;
       if (layer === 'flights' && !layersLoaded.flights) {
         layersLoaded.flights = true;
         updateFlights(viewer).catch(e => console.warn('Flight fetch:', e.message));
@@ -411,10 +426,6 @@ async function init() {
     }, 15000);
     // First correlation after data loads
     setTimeout(() => runCorrelation(viewer), 5000);
-
-    // Expose correlator for Nexus
-    window._getGlobalIntelSummary = getGlobalIntelSummary;
-    window._getRegionIntel = getRegionIntel;
 
     // Event detection + position snapshots — every 60 seconds
     setInterval(() => {

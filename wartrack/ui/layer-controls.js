@@ -2,6 +2,8 @@
 // LAYER CONTROLS — HUD toggle + icon size management
 // ============================================
 
+import { emit } from '../event-bus.js';
+
 // Global icon scale multipliers per layer
 export const iconScales = {
   flights: 1.0,
@@ -64,9 +66,7 @@ function setupSizer(sliderId, layerKey, defaultVal, callback) {
     iconScales[layerKey] = scale;
     if (valEl) valEl.textContent = scale.toFixed(1) + 'x';
     // Dispatch resize event for the layer to pick up
-    window.dispatchEvent(new CustomEvent('wartrack-icon-resize', {
-      detail: { layer: layerKey, scale, baseSize: val }
-    }));
+    emit('icon:resize', { layer: layerKey, scale, baseSize: val });
     if (callback) callback(scale);
   });
 }

@@ -48,9 +48,10 @@ export async function toggleThermal(viewer, active) {
   const vignette = document.getElementById('vignette-overlay');
   const thermalOverlay = document.getElementById('thermal-color-overlay');
 
-  // Access the separate base and label tile layers
-  const baseLayer = window._baseTileLayer;
-  const labelLayer = window._labelTileLayer;
+  // Access the separate base and label tile layers from store
+  const { getState } = await import('../store.js');
+  const baseLayer = getState('baseTileLayer');
+  const labelLayer = getState('labelTileLayer');
 
   if (active) {
     // === ENABLE WHITE-HOT FLIR MODE ===

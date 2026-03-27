@@ -33,6 +33,7 @@
 import { appState, updateStats } from '../main.js';
 import { apiUrl } from '../config.js';
 import { dedupFetch } from '../utils/dedup-fetch.js';
+import { on } from '../event-bus.js';
 
 /** @type {Map<string, Cesium.Entity>} Active vessel entities keyed by MMSI or generated ID */
 let vesselEntities = new Map();
@@ -44,9 +45,9 @@ let visible = true;
 let vesselIconScale = 1.0;
 
 // Listen for icon resize events
-window.addEventListener('wartrack-icon-resize', (e) => {
-  if (e.detail.layer !== 'vessels') return;
-  vesselIconScale = e.detail.scale;
+on('icon:resize', (detail) => {
+  if (detail.layer !== 'vessels') return;
+  vesselIconScale = detail.scale;
   const baseSize = 14;
   for (const [id, entity] of vesselEntities) {
     entity.billboard.width = baseSize * vesselIconScale;

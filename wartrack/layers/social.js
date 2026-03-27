@@ -16,6 +16,7 @@ import { getHotspots } from './hotspots.js';
 import { apiUrl } from '../config.js';
 import { checkOsintAlert } from './events.js';
 import { dedupFetch } from '../utils/dedup-fetch.js';
+import { on } from '../event-bus.js';
 
 /**
  * @typedef {Object} SocialContentItem
@@ -49,9 +50,9 @@ const CACHE_TTL = 15 * 60 * 1000;
 const MAX_ITEMS_PER_REGION = 12;
 
 // Listen for icon resize events
-window.addEventListener('wartrack-icon-resize', (e) => {
-  if (e.detail.layer !== 'social' || !dataSource) return;
-  socialIconScale = e.detail.scale;
+on('icon:resize', (detail) => {
+  if (detail.layer !== 'social' || !dataSource) return;
+  socialIconScale = detail.scale;
   for (const entity of dataSource.entities.values) {
     if (entity.billboard) {
       entity.billboard.width = 20 * socialIconScale;

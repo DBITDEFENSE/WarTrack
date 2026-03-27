@@ -4,6 +4,7 @@
 // ============================================
 
 import { getSetting } from './settings.js';
+import { on } from '../event-bus.js';
 
 let currentTimezone = 'UTC';
 
@@ -13,8 +14,8 @@ export function startClock() {
   const labelEl = document.querySelector('.clock-label');
 
   // Listen for settings changes
-  window.addEventListener('wartrack-settings-changed', (e) => {
-    const tz = e.detail?.timezone || 'UTC';
+  on('settings:change', (data) => {
+    const tz = data?.timezone || 'UTC';
     if (tz !== currentTimezone) {
       currentTimezone = tz;
       updateLabel();

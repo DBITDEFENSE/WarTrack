@@ -5,6 +5,7 @@
 
 import { isAuthenticated, getAuthHeaders } from './auth.js';
 import { apiUrl } from '../config.js';
+import { emit, on } from '../event-bus.js';
 
 const STORAGE_KEY = 'wartrack_settings';
 
@@ -60,7 +61,7 @@ export function getAllSettings() {
 // ============================================
 // APPLY SETTINGS
 // ============================================
-function applySettings() {
+async function applySettings() {
   // Scanlines
   const scanOverlay = document.getElementById('scanline-overlay');
   if (scanOverlay) {
@@ -68,7 +69,8 @@ function applySettings() {
   }
 
   // Label density
-  const labelLayer = window._labelTileLayer;
+  const { getState } = await import('../store.js');
+  const labelLayer = getState('labelTileLayer');
   if (labelLayer) {
     switch (settings.labelDensity) {
       case 'off':
@@ -86,7 +88,7 @@ function applySettings() {
   }
 
   // Dispatch for other modules (clock.js, flights.js, etc.)
-  window.dispatchEvent(new CustomEvent('wartrack-settings-changed', { detail: settings }));
+  emit('settings:change', settings);
 }
 
 // ============================================
@@ -272,11 +274,11 @@ export function initSettings() {
   document.getElementById('btn-manage-billing')?.addEventListener('click', handleManage);
 
   // Auth state changes
-  window.addEventListener('wartrack-auth-change', (e) => {
+  on('auth:change', (data) => {
     const info = document.getElementById('settings-account-info');
     const btn = document.getElementById('settings-auth-btn');
-    if (e.detail.user) {
-      if (info) info.textContent = `Signed in as ${e.detail.user.username}`;
+    if (data.user) {
+      if (info) info.textContent = `Signed in as ${data.user.username}`;
       if (btn) btn.textContent = 'SIGN OUT';
       loadBillingStatus();
     } else {

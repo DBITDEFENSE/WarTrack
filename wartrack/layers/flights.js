@@ -37,6 +37,8 @@ import { getAircraftIcon, getThermalIcon, AIRCRAFT_COLORS, resolveIconClass } fr
 import { resolveNation } from '../data/classify.js';
 import { apiUrl } from '../config.js';
 import { dedupFetch } from '../utils/dedup-fetch.js';
+import { emit, on } from '../event-bus.js';
+import { getState } from '../store.js';
 
 /** @type {Map<string, Cesium.Entity>} Active flight entities keyed by ICAO24 hex */
 let flightEntities = new Map();
@@ -56,9 +58,9 @@ let ICON_THERMAL = null;
 
 /**
  * Returns the maximum number of civilian aircraft to render.
- * @returns {number} Configurable via window._wartracMaxCivilian, defaults to 1500
+ * @returns {number} Configurable via store 'maxCivilian', defaults to 1500
  */
-function getMaxCivilian() { return window._wartracMaxCivilian || 1500; }
+function getMaxCivilian() { return getState('maxCivilian') || 1500; }
 /** @constant {number} Maximum number of positions retained per military trail */
 const MAX_TRAIL_POINTS = 15;
 /** @type {number} Current icon scale factor, adjustable via resize events */
@@ -72,9 +74,9 @@ document.getElementById('toggle-global-flights')?.addEventListener('change', (e)
 });
 
 // Listen for icon resize events
-window.addEventListener('wartrack-icon-resize', (e) => {
-  if (e.detail.layer !== 'flights') return;
-  iconScale = e.detail.scale;
+on('icon:resize', (detail) => {
+  if (detail.layer !== 'flights') return;
+  iconScale = detail.scale;
   // Update all existing entity billboard sizes
   for (const [icao, entity] of flightEntities) {
     const ac = entity.acData;
@@ -508,9 +510,7 @@ function processStates(viewer, states, clearStale) {
 
     // Share raw states with jamming layer
     if (states.length > 0) {
-      window.dispatchEvent(new CustomEvent('wartrack-flight-data', {
-        detail: { states, timestamp: Math.floor(Date.now() / 1000) }
-      }));
+      emit('flight:data', { states, timestamp: Math.floor(Date.now() / 1000) });
     }
 }
 
