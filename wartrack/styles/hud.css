@@ -334,6 +334,52 @@ input:checked + .thermal-indicator {
   border-color: var(--hud-green) !important;
 }
 
+/* Globe right-click context menu */
+.globe-context-menu {
+  position: fixed;
+  z-index: 2000;
+  background: var(--hud-bg-solid);
+  border: 1px solid var(--hud-border);
+  border-radius: 4px;
+  padding: 0;
+  min-width: 200px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+}
+
+.gcm-header {
+  padding: 8px 12px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--hud-green-dim);
+  border-bottom: 1px solid var(--hud-border);
+}
+
+.gcm-item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  color: var(--hud-white);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.gcm-item:hover {
+  background: rgba(0, 255, 136, 0.08);
+  color: var(--hud-green);
+}
+
+.gcm-item + .gcm-item {
+  border-top: 1px solid rgba(0, 255, 136, 0.06);
+}
+
 /* Sub-toggle (indented option under a parent layer) */
 .sub-toggle {
   padding-left: 18px !important;

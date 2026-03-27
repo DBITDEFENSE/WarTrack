@@ -30,7 +30,7 @@ import { initSolarSystem, setSolarSystemVisible, flyToPlanet, flyToEarth } from 
 import { runCorrelation, getRegionIntel, getGlobalIntelSummary } from './layers/correlator.js';
 import { initSocial, setSocialVisible, loadContentForVisibleRegions } from './layers/social.js';
 import { initSettings } from './ui/settings.js';
-import { initGroundView } from './ui/ground-view.js';
+import { initGroundView, openGroundView } from './ui/ground-view.js';
 
 // Cesium Ion token — free tier
 Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI0YWMxMWEyMi01Y2QzLTRkNjQtOGZiZi0yNjA1M2I5MmMwYjMiLCJpZCI6MjY1MTM4LCJpYXQiOjE3MzUzMjUxNTJ9.r0OHLB0jVaFEuyOJMhGsG-KBoyXQFMCMBiPBNn9xdYo';
@@ -322,6 +322,22 @@ async function init() {
     initSettings();
     initGroundView();
 
+    // RIGHT-CLICK anywhere on the globe → "Ground View Here" context menu
+    const rightClickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    rightClickHandler.setInputAction((click) => {
+      // Get the globe position from the click
+      const ray = viewer.camera.getPickRay(click.position);
+      if (!ray) return;
+      const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+      if (!cartesian) return;
+      const carto = Cesium.Cartographic.fromCartesian(cartesian);
+      const lat = Cesium.Math.toDegrees(carto.latitude);
+      const lon = Cesium.Math.toDegrees(carto.longitude);
+
+      // Show a small context menu at click position
+      showGlobeContextMenu(click.position.x, click.position.y, lat, lon);
+    }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
+
     // Listen for settings changes to apply maxAircraft + refreshRate dynamically
     window.addEventListener('wartrack-settings-changed', (e) => {
       const s = e.detail;
@@ -495,3 +511,63 @@ async function init() {
 }
 
 init();
+
+// ============================================
+// GLOBE CONTEXT MENU — right-click anywhere
+// ============================================
+function showGlobeContextMenu(x, y, lat, lon) {
+  // Remove any existing context menu
+  const existing = document.getElementById('globe-context-menu');
+  if (existing) existing.remove();
+
+  const menu = document.createElement('div');
+  menu.id = 'globe-context-menu';
+  menu.className = 'globe-context-menu';
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  menu.innerHTML = `
+    <div class="gcm-header">${lat.toFixed(4)}°, ${lon.toFixed(4)}°</div>
+    <button class="gcm-item" id="gcm-groundview">◈ GROUND VIEW HERE</button>
+    <button class="gcm-item" id="gcm-nexus">◆ ASK NEXUS ABOUT HERE</button>
+    <button class="gcm-item" id="gcm-copy">📋 COPY COORDINATES</button>
+  `;
+  document.body.appendChild(menu);
+
+  // Ground view
+  menu.querySelector('#gcm-groundview').addEventListener('click', () => {
+    openGroundView(lat, lon, `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`);
+    menu.remove();
+  });
+
+  // Nexus query
+  menu.querySelector('#gcm-nexus').addEventListener('click', () => {
+    const nexusInput = document.getElementById('nexus-input');
+    const nexusPanel = document.getElementById('nexus-panel');
+    if (nexusInput && nexusPanel) {
+      nexusPanel.classList.remove('hidden');
+      nexusInput.value = `What is happening near ${lat.toFixed(2)}°, ${lon.toFixed(2)}°?`;
+      nexusInput.focus();
+    }
+    menu.remove();
+  });
+
+  // Copy coordinates
+  menu.querySelector('#gcm-copy').addEventListener('click', () => {
+    navigator.clipboard?.writeText(`${lat.toFixed(6)}, ${lon.toFixed(6)}`);
+    menu.remove();
+  });
+
+  // Close on click anywhere else
+  setTimeout(() => {
+    document.addEventListener('click', function closeMenu() {
+      menu.remove();
+      document.removeEventListener('click', closeMenu);
+    }, { once: true });
+  }, 100);
+
+  // Close on scroll/zoom
+  document.addEventListener('wheel', function closeMenu() {
+    menu.remove();
+    document.removeEventListener('wheel', closeMenu);
+  }, { once: true });
+}
