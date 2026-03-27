@@ -120,14 +120,71 @@ export async function openGroundView(lat, lon, name = '', context = {}) {
 }
 
 // ============================================
-// INTERACTIVE STREET VIEW (Google Embed)
+// INTERACTIVE STREET VIEW (Google Maps JS API — pannable 360°)
 // ============================================
-function showInteractiveStreetView(lat, lon, body, badge) {
-  // Interactive mode: open Google Street View in a new tab (embed requires key in URL)
-  // For in-app, show the static preview large and link out
-  window.open(`https://www.google.com/maps/@${lat},${lon},3a,75y,0h,90t/data=!3m1!1e3`, '_blank');
-  badge.textContent = 'GOOGLE STREET VIEW — OPENED IN NEW TAB';
-  badge.className = 'gv-provider-badge gv-badge-google';
+let mapsApiLoaded = false;
+
+function loadGoogleMapsAPI() {
+  return new Promise((resolve, reject) => {
+    if (mapsApiLoaded && window.google?.maps) { resolve(); return; }
+    // Fetch API key from server
+    fetch(apiUrl('/api/config/google-maps-key'))
+      .then(r => r.json())
+      .then(data => {
+        if (!data.key) { reject(new Error('No Google Maps key')); return; }
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${data.key}&libraries=streetView`;
+        script.onload = () => { mapsApiLoaded = true; resolve(); };
+        script.onerror = reject;
+        document.head.appendChild(script);
+      })
+      .catch(reject);
+  });
+}
+
+async function showInteractiveStreetView(lat, lon, body, badge) {
+  body.innerHTML = `<div class="gv-loading">Loading interactive Street View...</div>`;
+
+  try {
+    await loadGoogleMapsAPI();
+
+    body.innerHTML = `<div id="gv-streetview-pano" style="width:100%;height:100%"></div>`;
+
+    const panorama = new google.maps.StreetViewPanorama(
+      document.getElementById('gv-streetview-pano'),
+      {
+        position: { lat, lng: lon },
+        pov: { heading: 0, pitch: 0 },
+        zoom: 1,
+        addressControl: false,
+        showRoadLabels: false,
+        motionTracking: false,
+        motionTrackingControl: false,
+      }
+    );
+
+    // Check if panorama actually found imagery
+    const sv = new google.maps.StreetViewService();
+    sv.getPanorama({ location: { lat, lng: lon }, radius: 500 }, (data, status) => {
+      if (status !== 'OK') {
+        body.innerHTML = `
+          <div class="gv-fallback-container">
+            <div class="gv-fallback-icon">📡</div>
+            <div class="gv-fallback-text">No interactive Street View available within 500m</div>
+            <a href="https://www.google.com/maps/@${lat},${lon},3a,75y,0h,90t" target="_blank" class="gv-btn gv-btn-primary" style="margin-top:12px;display:inline-block;text-decoration:none">TRY GOOGLE MAPS →</a>
+          </div>
+        `;
+      }
+    });
+
+    badge.textContent = 'GOOGLE STREET VIEW — INTERACTIVE (DRAG TO LOOK AROUND)';
+    badge.className = 'gv-provider-badge gv-badge-google';
+  } catch (err) {
+    // Fallback: open in new tab
+    window.open(`https://www.google.com/maps/@${lat},${lon},3a,75y,0h,90t/data=!3m1!1e3`, '_blank');
+    badge.textContent = 'OPENED IN NEW TAB';
+    badge.className = 'gv-provider-badge gv-badge-google';
+  }
 }
 
 // ============================================

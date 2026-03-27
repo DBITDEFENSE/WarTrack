@@ -925,6 +925,12 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // ---- GOOGLE MAPS KEY (for JS API — browser-restricted key is OK to expose) ----
+    if (urlPath === '/api/config/google-maps-key') {
+      res.writeHead(200);
+      return res.end(JSON.stringify({ key: GOOGLE_MAPS_KEY || '' }));
+    }
+
     // ---- STREET VIEW PROXY (keeps Google API key server-side) ----
     if (urlPath === '/api/streetview') {
       if (!GOOGLE_MAPS_KEY) {
