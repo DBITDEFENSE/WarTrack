@@ -215,6 +215,13 @@ function processFlightData(states, viewer) {
   jammingStats = { totalCells: cells.size, highCells: highCount, moderateCells: modCount };
   appState.jammingCells = cells.size;
 
+  // Dispatch event for alerts engine
+  if (highCount > 0 || modCount > 0) {
+    window.dispatchEvent(new CustomEvent('wartrack-jamming-update', {
+      detail: { highCells: highCount, moderateCells: modCount, totalCells: cells.size }
+    }));
+  }
+
   // Push snapshot for replay
   pushSnapshot({
     timestamp: Date.now(),

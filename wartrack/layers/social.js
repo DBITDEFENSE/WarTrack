@@ -7,6 +7,7 @@
 import { appState } from '../main.js';
 import { getHotspots } from './hotspots.js';
 import { apiUrl } from '../config.js';
+import { checkOsintAlert } from './events.js';
 
 let dataSource = null;
 let contentCache = new Map();
@@ -116,6 +117,8 @@ export async function loadContentForVisibleRegions(viewer) {
 
     const items = await fetchContentForRegion(hs.name, hs.lat, hs.lon);
     renderContentItems(items, hs);
+    // Check for conflict keyword spikes → fire OSINT alert
+    checkOsintAlert(items, hs.name, hs.lat, hs.lon);
   }
 }
 

@@ -32,6 +32,143 @@ let adsbxCache = { data: null, timestamp: 0 };
 const ADSBX_CACHE_TTL = 15000;
 
 // ============================================
+// VESSEL TRACKING — Digitraffic AIS (free, no key)
+// ============================================
+const vesselStore = new Map(); // keyed by MMSI
+let vesselCacheJson = null;
+let vesselCacheTs = 0;
+const VESSEL_CACHE_TTL = 30000; // 30s response cache
+const VESSEL_STALE_TTL = 600000; // prune vessels not seen in 10 min
+const VESSEL_FETCH_INTERVAL = 60000; // poll every 60s
+
+let vesselMetadata = new Map(); // MMSI → { name, shipType, destination, callSign }
+let vesselMetaLastFetch = 0;
+const VESSEL_META_TTL = 300000; // refresh metadata every 5 min
+
+// MMSI prefix → country code (first 3 digits of MMSI identify the flag state)
+const MMSI_FLAG = {
+  '201':'GR','209':'MT','210':'MT','211':'DE','212':'CY','213':'GE','214':'MD','215':'MT',
+  '218':'DE','219':'DK','220':'DK','224':'ES','225':'ES','226':'FR','227':'FR','228':'FR',
+  '229':'MT','230':'FI','231':'FI','232':'GB','233':'GB','234':'GB','235':'GB','236':'GI',
+  '237':'GR','238':'HR','239':'GR','240':'GR','241':'GR','242':'MA','243':'HU','244':'NL',
+  '245':'NL','246':'NL','247':'IT','248':'MT','249':'MT','250':'IE','251':'IS','252':'LI',
+  '253':'LU','255':'PT','256':'MT','257':'NO','258':'NO','259':'NO','261':'PL','263':'PT',
+  '265':'SE','266':'SE','267':'SE','269':'CH','270':'CZ','271':'TR','272':'UA','273':'RU',
+  '274':'MK','275':'LV','276':'EE','277':'LT','278':'SI','279':'MT','301':'AI','303':'US',
+  '304':'AG','305':'AG','306':'CW','307':'AR','308':'BS','309':'BS','310':'BM','311':'BS',
+  '312':'BZ','314':'BB','316':'BR','319':'KY','321':'CL','323':'CO','325':'CR','327':'CU',
+  '329':'GP','330':'GD','331':'GL','332':'GT','334':'HN','336':'HT','338':'US','339':'JM',
+  '341':'KN','343':'LC','345':'MX','347':'MQ','348':'MS','350':'NI','351':'PA','352':'PA',
+  '353':'PA','354':'PA','355':'PA','356':'PA','357':'PA','358':'PR','359':'SV','361':'PM',
+  '362':'TT','364':'TC','366':'US','367':'US','368':'US','369':'US','370':'PA','371':'PA',
+  '372':'PA','373':'PA','374':'PA','375':'VC','376':'VC','377':'VC','378':'VG','379':'VI',
+  '401':'AF','403':'SA','405':'BD','408':'BH','410':'BT','412':'CN','413':'CN','414':'CN',
+  '416':'TW','417':'LK','419':'IN','422':'IR','423':'AZ','425':'IQ','428':'IL','431':'JP',
+  '432':'JP','434':'TM','436':'KZ','437':'UZ','438':'JO','440':'KR','441':'KR','443':'PS',
+  '445':'KP','447':'KW','450':'LB','451':'KG','453':'MO','455':'MV','457':'MN','459':'NP',
+  '461':'OM','463':'PK','466':'QA','468':'SY','470':'AE','471':'AE','472':'TJ','473':'YE',
+  '475':'SA','477':'HK','478':'BA','501':'FR','503':'AU','506':'MM','508':'BN','510':'FM',
+  '511':'PW','512':'NZ','514':'KH','515':'KH','516':'AU','518':'NZ','520':'KI','523':'CK',
+  '525':'ID','529':'KI','531':'LA','533':'MY','536':'MP','538':'MH','540':'NC','542':'NU',
+  '544':'NR','546':'FR','548':'PH','553':'PG','555':'PN','557':'SB','559':'AS','561':'WS',
+  '563':'SG','564':'SG','565':'SG','566':'SG','567':'TH','570':'TO','572':'TV','574':'VN',
+  '576':'VU','577':'VU','578':'WF','601':'ZA','603':'AO','605':'DZ','607':'FR','608':'GB',
+  '609':'BI','610':'BJ','611':'BW','612':'CF','613':'CM','616':'KM','617':'CV','618':'CD',
+  '619':'CI','620':'KM','621':'DJ','622':'EG','624':'ET','625':'ER','626':'GA','627':'GH',
+  '629':'GM','630':'GW','631':'GQ','632':'GN','633':'BF','634':'KE','636':'LR','637':'LR',
+  '638':'SS','642':'LY','644':'LS','645':'MU','647':'MG','649':'ML','650':'MZ','654':'MR',
+  '655':'MW','656':'NE','657':'NG','659':'NA','660':'RE','661':'RW','662':'SD','663':'SN',
+  '664':'SC','665':'SH','666':'SO','667':'SL','668':'ST','669':'SZ','670':'TD','671':'TG',
+  '672':'TN','674':'TZ','675':'UG','676':'CD','677':'TZ','678':'ZM','679':'ZW',
+};
+
+function flagFromMmsi(mmsi) {
+  const prefix = String(mmsi).substring(0, 3);
+  return MMSI_FLAG[prefix] || '';
+}
+
+async function fetchVesselMetadata() {
+  if (Date.now() - vesselMetaLastFetch < VESSEL_META_TTL && vesselMetadata.size > 0) return;
+  try {
+    const { data, statusCode } = await fetchUrl('https://meri.digitraffic.fi/api/ais/v1/vessels', {
+      headers: { 'Accept-Encoding': 'gzip' }
+    });
+    if (statusCode !== 200 || !Array.isArray(data)) return;
+    for (const v of data) {
+      if (!v.mmsi) continue;
+      vesselMetadata.set(v.mmsi, {
+        name: v.name || '',
+        shipType: v.shipType || 0,
+        destination: v.destination || '',
+        callSign: v.callSign || '',
+        imo: v.imo || 0,
+      });
+    }
+    vesselMetaLastFetch = Date.now();
+    console.log(`  Digitraffic metadata: ${vesselMetadata.size} vessel records`);
+  } catch (err) {
+    console.warn('  Digitraffic metadata fetch error:', err.message);
+  }
+}
+
+async function fetchDigitrafficVessels() {
+  // Fetch metadata first (cached, only refreshes every 5 min)
+  await fetchVesselMetadata();
+
+  try {
+    const { data, statusCode } = await fetchUrl('https://meri.digitraffic.fi/api/ais/v1/locations', {
+      headers: { 'Accept-Encoding': 'gzip' }
+    });
+    if (statusCode !== 200 || !data?.features) {
+      console.warn('  Digitraffic AIS: HTTP', statusCode);
+      return;
+    }
+    let count = 0;
+    for (const f of data.features) {
+      const props = f.properties;
+      const coords = f.geometry?.coordinates;
+      if (!props?.mmsi || !coords) continue;
+      const meta = vesselMetadata.get(props.mmsi) || {};
+      vesselStore.set(props.mmsi, {
+        mmsi: String(props.mmsi),
+        name: meta.name || '',
+        lat: coords[1],
+        lon: coords[0],
+        heading: props.heading ?? props.cog ?? 0,
+        cog: props.cog ?? 0,
+        speed: props.sog ?? 0,
+        shipType: meta.shipType ?? 0,
+        destination: meta.destination || '',
+        flag: flagFromMmsi(props.mmsi),
+        navStat: props.navStat ?? null,
+        lastSeen: Date.now(),
+      });
+      count++;
+    }
+    vesselCacheJson = null; // invalidate response cache
+    console.log(`  Digitraffic AIS: ${count} vessels updated (${vesselStore.size} total in store)`);
+  } catch (err) {
+    console.warn('  Digitraffic AIS fetch error:', err.message);
+  }
+}
+
+function getVesselData() {
+  const now = Date.now();
+  // Return cached serialized JSON if fresh
+  if (vesselCacheJson && now - vesselCacheTs < VESSEL_CACHE_TTL) {
+    return vesselCacheJson;
+  }
+  // Prune stale entries
+  for (const [mmsi, v] of vesselStore) {
+    if (now - v.lastSeen > VESSEL_STALE_TTL) vesselStore.delete(mmsi);
+  }
+  const vessels = Array.from(vesselStore.values());
+  vesselCacheJson = JSON.stringify(vessels);
+  vesselCacheTs = now;
+  return vesselCacheJson;
+}
+
+// ============================================
 // OPENSKY — OAuth2 Client Credentials Flow
 // ============================================
 let openSkyCreds = null;
@@ -559,10 +696,12 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify(result));
     }
 
-    // ---- VESSELS ----
+    // ---- VESSELS (Digitraffic AIS) ----
     if (urlPath === '/api/vessels') {
+      const data = getVesselData();
+      res.setHeader('X-Vessel-Count', String(vesselStore.size));
       res.writeHead(200);
-      return res.end(JSON.stringify([]));
+      return res.end(data);
     }
 
     // ---- NASA API (Mars rover photos, APOD) ----
@@ -595,7 +734,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // ---- SOCIAL CONTENT (YouTube + Reddit + Bluesky) ----
+    // ---- SOCIAL CONTENT (GDELT + Reddit + Bluesky) ----
     if (urlPath === '/api/social') {
       const region = url.searchParams.get('region') || 'world';
       const cacheKey = `social-${region}`;
@@ -607,46 +746,41 @@ const server = http.createServer(async (req, res) => {
       }
 
       const items = [];
+      const sourcesStatus = {};
 
-      // SOURCE 1: YouTube (public search, no key needed for RSS)
+      // SOURCE 1: GDELT (free, no key, geolocated global event articles)
       try {
-        const ytQuery = encodeURIComponent(`${region} conflict news 2024 2025`);
-        const ytUrl = `https://www.youtube.com/results?search_query=${ytQuery}&sp=CAI%253D`; // sort by date
-        // Use YouTube RSS feed (no API key needed)
-        const ytRssUrl = `https://www.youtube.com/feeds/videos.xml?search_query=${ytQuery}`;
-        // Fallback: use Google RSS for YouTube results
-        const googleYtUrl = `https://news.google.com/rss/search?q=${ytQuery}+site:youtube.com&hl=en-US`;
-        const { data: rssData } = await fetchUrl(googleYtUrl);
-        if (typeof rssData === 'string' && rssData.includes('<item>')) {
-          const rssItems = rssData.match(/<item>([\s\S]*?)<\/item>/g) || [];
-          for (const item of rssItems.slice(0, 5)) {
-            const title = item.match(/<title>(.*?)<\/title>/)?.[1]?.replace(/<!\[CDATA\[|\]\]>/g, '') || '';
-            const link = item.match(/<link>(.*?)<\/link>/)?.[1] || '';
-            const pubDate = item.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] || '';
-            if (title && link) {
-              items.push({
-                id: `yt-${items.length}`,
-                source: 'YouTube',
-                type: 'video',
-                title: title.replace(/ - YouTube$/, ''),
-                author: '',
-                timestamp: pubDate,
-                url: link,
-                thumbnail: '',
-                region,
-                relevance: 0.7,
-              });
-            }
+        const gdeltQuery = encodeURIComponent(`${region} conflict`);
+        const gdeltUrl = `https://api.gdeltproject.org/api/v2/doc/doc?query=${gdeltQuery}&mode=ArtList&maxrecords=10&format=json&sort=DateDesc`;
+        const { data: gdeltData, statusCode } = await fetchUrl(gdeltUrl);
+        if (statusCode === 200 && gdeltData?.articles) {
+          for (const art of gdeltData.articles.slice(0, 8)) {
+            items.push({
+              id: `gdelt-${items.length}-${Date.now()}`,
+              source: 'GDELT',
+              type: 'article',
+              title: art.title?.substring(0, 140) || '',
+              author: art.domain || art.sourcecountry || '',
+              timestamp: art.seendate || '',
+              url: art.url || '',
+              thumbnail: art.socialimage || '',
+              language: art.language || 'English',
+              region,
+              relevance: 0.85,
+            });
           }
+          sourcesStatus.gdelt = 'ok';
+        } else {
+          sourcesStatus.gdelt = 'error';
         }
-      } catch { /* YouTube fetch failed */ }
+      } catch { sourcesStatus.gdelt = 'error'; }
 
-      // SOURCE 2: Reddit (public JSON — requires browser-like User-Agent)
+      // SOURCE 2: Reddit (public JSON — proper User-Agent per API guidelines)
       try {
         const redditQuery = encodeURIComponent(region);
-        const redditUrl = `https://www.reddit.com/search.json?q=${redditQuery}&sort=new&limit=5&t=week`;
+        const redditUrl = `https://www.reddit.com/search.json?q=${redditQuery}&sort=new&limit=5&t=week&raw_json=1`;
         const { data: redditData, statusCode } = await fetchUrl(redditUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+          headers: { 'User-Agent': 'WarTrack/1.0 (intelligence platform; github.com/wartrack)' }
         });
         if (statusCode === 200 && redditData?.data?.children) {
           for (const child of redditData.data.children.slice(0, 5)) {
@@ -668,8 +802,41 @@ const server = http.createServer(async (req, res) => {
               relevance: Math.min(0.9, (post.score || 0) / 1000 + 0.3),
             });
           }
+          sourcesStatus.reddit = 'ok';
+        } else if (statusCode === 429) {
+          // Rate limited — wait 5s and retry once
+          await new Promise(r => setTimeout(r, 5000));
+          const { data: retryData, statusCode: retryStatus } = await fetchUrl(redditUrl, {
+            headers: { 'User-Agent': 'WarTrack/1.0 (intelligence platform; github.com/wartrack)' }
+          });
+          if (retryStatus === 200 && retryData?.data?.children) {
+            for (const child of retryData.data.children.slice(0, 5)) {
+              const post = child.data;
+              if (!post || post.over_18) continue;
+              items.push({
+                id: `reddit-${post.id}`,
+                source: 'Reddit',
+                type: 'post',
+                title: post.title?.substring(0, 120),
+                text: post.selftext?.substring(0, 200),
+                author: post.author,
+                timestamp: new Date(post.created_utc * 1000).toISOString(),
+                url: `https://reddit.com${post.permalink}`,
+                thumbnail: post.thumbnail?.startsWith('http') ? post.thumbnail : '',
+                subreddit: post.subreddit,
+                score: post.score,
+                region,
+                relevance: Math.min(0.9, (post.score || 0) / 1000 + 0.3),
+              });
+            }
+            sourcesStatus.reddit = 'ok';
+          } else {
+            sourcesStatus.reddit = 'rate_limited';
+          }
+        } else {
+          sourcesStatus.reddit = 'error';
         }
-      } catch { /* Reddit fetch failed */ }
+      } catch { sourcesStatus.reddit = 'error'; }
 
       // SOURCE 3: Bluesky (public search, no auth needed)
       try {
@@ -691,13 +858,17 @@ const server = http.createServer(async (req, res) => {
               relevance: 0.5,
             });
           }
+          sourcesStatus.bluesky = 'ok';
+        } else {
+          sourcesStatus.bluesky = 'error';
         }
-      } catch { /* Bluesky fetch failed */ }
+      } catch { sourcesStatus.bluesky = 'error'; }
 
       // Sort by relevance
       items.sort((a, b) => (b.relevance || 0) - (a.relevance || 0));
 
-      const result = { items: items.slice(0, 15), region, sources: ['YouTube', 'Reddit', 'Bluesky'] };
+      const activeSources = Object.entries(sourcesStatus).filter(([,v]) => v === 'ok').map(([k]) => k);
+      const result = { items: items.slice(0, 15), region, sources: activeSources, sourcesStatus };
       global.socialCache[cacheKey] = { data: result, ts: Date.now() };
       res.writeHead(200);
       return res.end(JSON.stringify(result));
@@ -1016,18 +1187,67 @@ const server = http.createServer(async (req, res) => {
 // SAMPLE CAMERA DATA (when no Windy API key)
 // ============================================
 function generateSampleCameras(bboxStr) {
-  // Sample cameras with real YouTube live stream IDs for embed
+  const cam = (id, title, lat, lon, city, country, cats) => ({
+    webcamId: id, title, location: { latitude: lat, longitude: lon, city, country },
+    categories: cats, status: 'active', urls: { detail: '' }, images: { current: { preview: '' } },
+  });
   const cameras = [
-    { webcamId: 'cam-001', title: 'Times Square NYC', location: { latitude: 40.758, longitude: -73.9855, city: 'New York', country: 'United States' }, categories: ['city'], status: 'active', urls: { detail: 'https://www.earthcam.com/usa/newyork/timessquare/' }, images: { current: { preview: 'https://images.unsplash.com/photo-1534430480872-3498386e7856?w=400&h=225&fit=crop' } } },
-    { webcamId: 'cam-002', title: 'Eiffel Tower Paris', location: { latitude: 48.8584, longitude: 2.2945, city: 'Paris', country: 'France' }, categories: ['city', 'landscape'], status: 'active', urls: { detail: 'https://www.earthcam.com/world/france/paris/' }, images: { current: { preview: 'https://images.unsplash.com/photo-1543349689-9a4d426bee8e?w=400&h=225&fit=crop' } } },
-    { webcamId: 'cam-003', title: 'Tower Bridge London', location: { latitude: 51.5055, longitude: -0.0754, city: 'London', country: 'United Kingdom' }, categories: ['city'], status: 'active', urls: { detail: 'https://www.earthcam.com/world/england/london/' }, images: { current: { preview: 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?w=400&h=225&fit=crop' } } },
-    { webcamId: 'cam-004', title: 'LAX Airport', location: { latitude: 33.9425, longitude: -118.408, city: 'Los Angeles', country: 'United States' }, categories: ['airport'], status: 'active', urls: { detail: 'https://www.flightradar24.com/airport/lax' }, images: { current: { preview: 'https://images.unsplash.com/photo-1436491865332-7a61a109db05?w=400&h=225&fit=crop' } } },
-    { webcamId: 'cam-005', title: 'Port of Rotterdam', location: { latitude: 51.9036, longitude: 4.4860, city: 'Rotterdam', country: 'Netherlands' }, categories: ['harbor', 'port'], status: 'active', urls: { detail: 'https://www.portofrotterdam.com/en/online/webcams' }, images: { current: { preview: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=400&h=225&fit=crop' } } },
-    { webcamId: 'cam-006', title: 'Shibuya Crossing Tokyo', location: { latitude: 35.6595, longitude: 139.7004, city: 'Tokyo', country: 'Japan' }, categories: ['city', 'traffic'], status: 'active', urls: { detail: 'https://www.youtube.com/watch?v=_9MKxJQMKfE' }, images: { current: { preview: 'https://images.unsplash.com/photo-1542051841857-5f90071e7989?w=400&h=225&fit=crop' } } },
-    { webcamId: 'cam-007', title: 'Dubai Skyline', location: { latitude: 25.1972, longitude: 55.2744, city: 'Dubai', country: 'United Arab Emirates' }, categories: ['city', 'landscape'], status: 'active', urls: { detail: 'https://www.earthcam.com/world/unitedarabemirates/dubai/' }, images: { current: { preview: 'https://images.unsplash.com/photo-1512453979798-5ea266f8880c?w=400&h=225&fit=crop' } } },
-    { webcamId: 'cam-008', title: 'Sydney Harbour', location: { latitude: -33.8568, longitude: 151.2153, city: 'Sydney', country: 'Australia' }, categories: ['harbor', 'city'], status: 'active', urls: { detail: 'https://www.sydney.com/webcams' }, images: { current: { preview: 'https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?w=400&h=225&fit=crop' } } },
-    { webcamId: 'cam-009', title: 'Istanbul Bosphorus', location: { latitude: 41.0424, longitude: 29.0082, city: 'Istanbul', country: 'Turkey' }, categories: ['harbor', 'city'], status: 'active', urls: { detail: 'https://www.skylinewebcams.com/en/webcam/turkey/istanbul.html' }, images: { current: { preview: 'https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?w=400&h=225&fit=crop' } } },
-    { webcamId: 'cam-010', title: 'Singapore Marina Bay', location: { latitude: 1.2816, longitude: 103.8636, city: 'Singapore', country: 'Singapore' }, categories: ['city', 'harbor'], status: 'active', urls: { detail: 'https://www.skylinewebcams.com/en/webcam/singapore.html' }, images: { current: { preview: 'https://images.unsplash.com/photo-1525625293386-3f8f99389edd?w=400&h=225&fit=crop' } } },
+    // Major cities
+    cam('cam-001', 'Times Square NYC', 40.758, -73.9855, 'New York', 'US', ['city', 'traffic']),
+    cam('cam-002', 'Eiffel Tower Paris', 48.8584, 2.2945, 'Paris', 'FR', ['city', 'landscape']),
+    cam('cam-003', 'Tower Bridge London', 51.5055, -0.0754, 'London', 'GB', ['city']),
+    cam('cam-004', 'Shibuya Crossing Tokyo', 35.6595, 139.7004, 'Tokyo', 'JP', ['city', 'traffic']),
+    cam('cam-005', 'Dubai Skyline', 25.1972, 55.2744, 'Dubai', 'AE', ['city', 'landscape']),
+    cam('cam-006', 'Sydney Harbour', -33.8568, 151.2153, 'Sydney', 'AU', ['harbor', 'city']),
+    cam('cam-007', 'Istanbul Bosphorus', 41.0424, 29.0082, 'Istanbul', 'TR', ['harbor', 'city']),
+    cam('cam-008', 'Singapore Marina Bay', 1.2816, 103.8636, 'Singapore', 'SG', ['city', 'harbor']),
+    cam('cam-009', 'Moscow Red Square', 55.7539, 37.6208, 'Moscow', 'RU', ['city']),
+    cam('cam-010', 'Berlin Brandenburg Gate', 52.5163, 13.3777, 'Berlin', 'DE', ['city']),
+    cam('cam-011', 'Rome Colosseum', 41.8902, 12.4922, 'Rome', 'IT', ['city', 'landscape']),
+    cam('cam-012', 'Hong Kong Victoria Harbour', 22.2855, 114.1577, 'Hong Kong', 'HK', ['harbor', 'city']),
+    cam('cam-013', 'Seoul Gangnam', 37.4979, 127.0276, 'Seoul', 'KR', ['city', 'traffic']),
+    cam('cam-014', 'Mumbai Gateway of India', 18.9220, 72.8347, 'Mumbai', 'IN', ['city', 'harbor']),
+    cam('cam-015', 'Cairo Pyramids', 29.9792, 31.1342, 'Cairo', 'EG', ['landscape']),
+    // Airports
+    cam('cam-016', 'LAX Airport', 33.9425, -118.408, 'Los Angeles', 'US', ['airport']),
+    cam('cam-017', 'Heathrow Airport', 51.4700, -0.4543, 'London', 'GB', ['airport']),
+    cam('cam-018', 'Frankfurt Airport', 50.0379, 8.5622, 'Frankfurt', 'DE', ['airport']),
+    cam('cam-019', 'Changi Airport', 1.3644, 103.9915, 'Singapore', 'SG', ['airport']),
+    cam('cam-020', 'JFK Airport', 40.6413, -73.7781, 'New York', 'US', ['airport']),
+    cam('cam-021', 'Dubai International Airport', 25.2532, 55.3657, 'Dubai', 'AE', ['airport']),
+    cam('cam-022', 'Incheon Airport', 37.4602, 126.4407, 'Seoul', 'KR', ['airport']),
+    // Ports & harbors
+    cam('cam-023', 'Port of Rotterdam', 51.9036, 4.486, 'Rotterdam', 'NL', ['harbor', 'port']),
+    cam('cam-024', 'Port of Shanghai', 30.6167, 122.0670, 'Shanghai', 'CN', ['harbor', 'port']),
+    cam('cam-025', 'Strait of Gibraltar', 35.9868, -5.6021, 'Tarifa', 'ES', ['harbor', 'landscape']),
+    cam('cam-026', 'Suez Canal', 30.5765, 32.2651, 'Ismailia', 'EG', ['harbor']),
+    cam('cam-027', 'Panama Canal Miraflores', 9.0153, -79.5900, 'Panama City', 'PA', ['harbor']),
+    cam('cam-028', 'Port of Hamburg', 53.5400, 9.9700, 'Hamburg', 'DE', ['harbor', 'port']),
+    cam('cam-029', 'Port of Piraeus', 37.9475, 23.6416, 'Athens', 'GR', ['harbor', 'port']),
+    cam('cam-030', 'Busan Port', 35.0796, 129.0756, 'Busan', 'KR', ['harbor', 'port']),
+    // Strategic / conflict-adjacent
+    cam('cam-031', 'Odesa Sea Port', 46.4875, 30.7600, 'Odesa', 'UA', ['harbor']),
+    cam('cam-032', 'Sevastopol Bay', 44.6167, 33.5254, 'Sevastopol', 'UA', ['harbor']),
+    cam('cam-033', 'Haifa Port', 32.8191, 35.0004, 'Haifa', 'IL', ['harbor']),
+    cam('cam-034', 'Taipei 101 Tower', 25.0340, 121.5645, 'Taipei', 'TW', ['city']),
+    cam('cam-035', 'Djibouti Port', 11.5921, 43.1456, 'Djibouti', 'DJ', ['harbor']),
+    cam('cam-036', 'Aden Harbor', 12.7854, 45.0187, 'Aden', 'YE', ['harbor']),
+    cam('cam-037', 'Strait of Hormuz (Muscat)', 23.5880, 58.5922, 'Muscat', 'OM', ['harbor']),
+    cam('cam-038', 'Bab el-Mandeb (Djibouti)', 11.8251, 43.2562, 'Obock', 'DJ', ['harbor', 'landscape']),
+    // Traffic / infrastructure
+    cam('cam-039', 'Autobahn A1 Hamburg', 53.5575, 10.0217, 'Hamburg', 'DE', ['traffic']),
+    cam('cam-040', 'M25 London Orbital', 51.3984, -0.2577, 'London', 'GB', ['traffic']),
+    cam('cam-041', 'I-405 Los Angeles', 33.9575, -118.3892, 'Los Angeles', 'US', ['traffic']),
+    // Scenic / coastal
+    cam('cam-042', 'Niagara Falls', 43.0799, -79.0747, 'Niagara Falls', 'CA', ['landscape']),
+    cam('cam-043', 'Santorini Caldera', 36.4161, 25.4322, 'Santorini', 'GR', ['landscape', 'beach']),
+    cam('cam-044', 'Copacabana Beach Rio', -22.9711, -43.1822, 'Rio de Janeiro', 'BR', ['beach', 'city']),
+    cam('cam-045', 'Cape Town Table Mountain', -33.9625, 18.4099, 'Cape Town', 'ZA', ['landscape', 'city']),
+    cam('cam-046', 'Reykjavik Harbour', 64.1466, -21.9426, 'Reykjavik', 'IS', ['harbor', 'city']),
+    cam('cam-047', 'Nairobi City Centre', -1.2864, 36.8172, 'Nairobi', 'KE', ['city']),
+    cam('cam-048', 'Buenos Aires Puerto Madero', -34.6158, -58.3655, 'Buenos Aires', 'AR', ['harbor', 'city']),
+    cam('cam-049', 'Helsinki Market Square', 60.1674, 24.9514, 'Helsinki', 'FI', ['city', 'harbor']),
+    cam('cam-050', 'Tallinn Old Town', 59.4370, 24.7536, 'Tallinn', 'EE', ['city']),
   ];
 
   if (!bboxStr) return cameras;
@@ -1044,11 +1264,18 @@ server.listen(PORT, () => {
   console.log(`  Data APIs:`);
   console.log(`    /api/opensky     — Flight data ${openSkyCreds ? '(OAuth2 authenticated)' : '(anonymous)'}`);
   console.log(`    /api/news?q=     — GNews headlines`);
-  console.log(`    /api/vessels     — AIS vessel data`);
+  console.log(`    /api/vessels     — AIS vessel data (Digitraffic)`);
+  console.log(`    /api/social      — GDELT + Reddit + Bluesky`);
+  console.log(`    /api/cameras     — Webcams ${WINDY_WEBCAMS_KEY ? '(Windy API)' : '(sample data — set WINDY_WEBCAMS_KEY for live)'}`);
   console.log(`  Auth APIs:`);
   console.log(`    POST /api/auth/register`);
   console.log(`    POST /api/auth/login`);
   console.log(`    GET  /api/auth/me`);
   console.log(`  Favorites APIs:`);
   console.log(`    GET/POST/DELETE /api/favorites`);
+
+  // Start vessel AIS polling
+  console.log('\n  Starting Digitraffic AIS vessel polling (60s interval)...');
+  fetchDigitrafficVessels(); // initial fetch
+  setInterval(fetchDigitrafficVessels, VESSEL_FETCH_INTERVAL);
 });

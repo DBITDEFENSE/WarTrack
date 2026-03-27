@@ -11,6 +11,44 @@ const MAX_SNAPSHOTS = 10;
 const ALERT_MAX = 20;
 
 // ============================================
+// JAMMING ALERT LISTENER
+// ============================================
+let lastJammingAlert = 0;
+window.addEventListener('wartrack-jamming-update', (e) => {
+  const { highCells, moderateCells, totalCells } = e.detail || {};
+  if (highCells > 0 && Date.now() - lastJammingAlert > 300000) {
+    lastJammingAlert = Date.now();
+    addAlert({
+      type: 'JAMMING_DETECTED',
+      severity: highCells >= 3 ? 'critical' : 'high',
+      region: 'Global',
+      description: `GPS jamming detected: ${highCells} high-severity cells, ${moderateCells} moderate (${totalCells} total)`,
+      lat: 0, lon: 0,
+    });
+  }
+});
+
+// ============================================
+// OSINT ALERT — triggered when social content has conflict keywords
+// ============================================
+const CONFLICT_KEYWORDS = /\b(strike|explosion|attack|missile|bombing|military operation|escalation|invasion|airstrike|shelling|ceasefire broken)\b/i;
+
+export function checkOsintAlert(items, regionName, lat, lon) {
+  if (!items || items.length === 0) return;
+  const matches = items.filter(i => CONFLICT_KEYWORDS.test(i.title || ''));
+  if (matches.length >= 2) {
+    addAlert({
+      type: 'OSINT_ALERT',
+      severity: matches.length >= 4 ? 'critical' : 'elevated',
+      region: regionName,
+      description: `OSINT spike: ${matches.length} conflict-related articles detected for ${regionName}`,
+      lat: lat || 0,
+      lon: lon || 0,
+    });
+  }
+}
+
+// ============================================
 // TAKE SNAPSHOT — called each data refresh cycle
 // ============================================
 export function takeSnapshot(flightEntities, vesselEntities) {
