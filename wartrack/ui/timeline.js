@@ -7,6 +7,7 @@ import {
   isReplayMode, setReplayMode, getReplayTimestamp, setReplayTimestamp,
   getPlaySpeed, setPlaySpeed, isPlaying, setPlaying, getSnapshotCount
 } from '../data/snapshot-store.js';
+import { emit } from '../event-bus.js';
 
 let viewer = null;
 let barEl = null;
@@ -158,7 +159,7 @@ function returnToLive() {
   animFrameId = null;
   updateUI();
   // Trigger live refresh
-  window.dispatchEvent(new CustomEvent('wartrack-replay-end'));
+  emit('replay:end');
 }
 
 // ============================================
@@ -240,7 +241,7 @@ function playbackTick(now) {
 function triggerReplayFrame() {
   const snapshot = getSnapshotAt(getReplayTimestamp());
   if (!snapshot) return;
-  window.dispatchEvent(new CustomEvent('wartrack-replay-frame', { detail: snapshot }));
+  emit('replay:frame', snapshot);
   viewer?.scene?.requestRender();
 }
 

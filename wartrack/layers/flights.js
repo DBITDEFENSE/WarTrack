@@ -580,12 +580,98 @@ export function setFlightsVisible(v) {
 }
 
 // ============================================
+// REPLAY — render historical flight positions from snapshot
+// ============================================
+let replayDataSource = null;
+let replayEntities = new Map();
+
+export function renderFlightsFromSnapshot(snapshot, viewer) {
+  if (!snapshot?.flights || !viewer) return;
+
+  // Create replay data source on first use
+  if (!replayDataSource) {
+    replayDataSource = new Cesium.CustomDataSource('flights-replay');
+    viewer.dataSources.add(replayDataSource);
+  }
+
+  // Hide live data source during replay
+  if (dataSource) dataSource.show = false;
+  replayDataSource.show = true;
+
+  replayDataSource.entities.suspendEvents();
+  const activeIcaos = new Set();
+
+  for (const ac of snapshot.flights) {
+    if (!ac.lat || !ac.lon) continue;
+    activeIcaos.add(ac.icao24);
+
+    const existing = replayEntities.get(ac.icao24);
+    if (existing) {
+      existing.position = Cesium.Cartesian3.fromDegrees(ac.lon, ac.lat, ac.alt || 0);
+      existing.billboard.rotation = Cesium.Math.toRadians(-(ac.heading || 0));
+    } else {
+      const color = ac.isMil ? '#ff3344' : '#00aaff';
+      const size = ac.isMil ? 18 : 12;
+      const icon = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M12 2 L14 8 L20 10 L14 12 L14 18 L12 16 L10 18 L10 12 L4 10 L10 8 Z" fill="${color}" opacity="0.9"/></svg>`)}`;
+
+      const entity = replayDataSource.entities.add({
+        id: `replay-flight-${ac.icao24}`,
+        position: Cesium.Cartesian3.fromDegrees(ac.lon, ac.lat, ac.alt || 0),
+        billboard: {
+          image: icon,
+          width: size,
+          height: size,
+          rotation: Cesium.Math.toRadians(-(ac.heading || 0)),
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          disableDepthTestDistance: 0,
+          scaleByDistance: new Cesium.NearFarScalar(5e5, 1.2, 1.5e7, 0.3),
+        },
+        label: ac.isMil ? {
+          text: ac.callsign || ac.icao24,
+          font: '10px Share Tech Mono',
+          fillColor: Cesium.Color.fromCssColorString('#ff3344'),
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cesium.Cartesian2(0, -14),
+          disableDepthTestDistance: 0,
+          scaleByDistance: new Cesium.NearFarScalar(5e5, 1, 1.5e7, 0.25),
+          showBackground: true,
+          backgroundColor: Cesium.Color.fromCssColorString('rgba(0,0,0,0.7)')
+        } : undefined,
+      });
+      entity.entityType = 'flight';
+      entity.acData = ac;
+      replayEntities.set(ac.icao24, entity);
+    }
+  }
+
+  // Remove entities not in this snapshot
+  for (const [icao, entity] of replayEntities) {
+    if (!activeIcaos.has(icao)) {
+      replayDataSource.entities.remove(entity);
+      replayEntities.delete(icao);
+    }
+  }
+
+  replayDataSource.entities.resumeEvents();
+  viewer.scene.requestRender();
+}
+
+export function clearReplayFlights(viewer) {
+  if (replayDataSource) {
+    replayDataSource.entities.removeAll();
+    replayDataSource.show = false;
+    replayEntities.clear();
+  }
+  // Show live data source again
+  if (dataSource) dataSource.show = visible;
+}
+
+// ============================================
 // THERMAL MODE — swap icons
 // ============================================
-/**
- * Toggles thermal (IR) display mode: swaps all icons to white dots and trails to white glow.
- * @param {boolean} active - Whether thermal mode is active
- */
 export function setFlightsThermal(active) {
   for (const [icao, entity] of flightEntities) {
     const ac = entity.acData;

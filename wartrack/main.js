@@ -3,8 +3,8 @@
 // CesiumJS initialization, layer orchestration
 // ============================================
 
-import { initFlights, updateFlights, setFlightsVisible } from './layers/flights.js';
-import { initVessels, updateVessels, setVesselsVisible } from './layers/vessels.js';
+import { initFlights, updateFlights, setFlightsVisible, renderFlightsFromSnapshot, clearReplayFlights } from './layers/flights.js';
+import { initVessels, updateVessels, setVesselsVisible, renderVesselsFromSnapshot, clearReplayVessels } from './layers/vessels.js';
 import { initHotspots, setHotspotsVisible, getHotspots } from './layers/hotspots.js';
 import { initThermal, toggleThermal } from './layers/thermal.js';
 import { initNews, setNewsVisible, fetchAllNews, clearCache } from './layers/news.js';
@@ -21,10 +21,10 @@ import { initNexus } from './ui/nexus.js';
 import { initAlerts } from './ui/alerts.js';
 import { takeSnapshot } from './layers/events.js';
 import { initSatellites, updateSatellites, setSatellitesVisible, setCoverageVisible } from './layers/satellites.js';
-import { initJamming, updateJamming, setJammingVisible } from './layers/jamming.js';
+import { initJamming, updateJamming, setJammingVisible, renderFromSnapshot as renderJammingFromSnapshot } from './layers/jamming.js';
 import { initGlobeStyles } from './ui/globe-styles.js';
 import { initTimeline, showTimeline } from './ui/timeline.js';
-import { isReplayMode } from './data/snapshot-store.js';
+import { isReplayMode, pushSnapshot } from './data/snapshot-store.js';
 import { initCameras, setCamerasVisible } from './layers/cameras.js';
 import { initSolarSystem, setSolarSystemVisible, flyToPlanet, flyToEarth } from './layers/solarsystem.js';
 import { runCorrelation, getRegionIntel, getGlobalIntelSummary } from './layers/correlator.js';
@@ -392,6 +392,26 @@ async function init() {
       }
     });
 
+    // Replay frame listener — update all layers from snapshot data
+    on('replay:frame', (snapshot) => {
+      if (!snapshot) return;
+      renderFlightsFromSnapshot(snapshot, viewer);
+      renderVesselsFromSnapshot(snapshot, viewer);
+      // Jamming replay if hex cells exist in snapshot
+      if (snapshot.hexCells) {
+        renderJammingFromSnapshot(snapshot.hexCells, viewer);
+      }
+    });
+
+    // Return to live — clear replay entities, restore live data
+    on('replay:end', () => {
+      clearReplayFlights(viewer);
+      clearReplayVessels(viewer);
+      // Trigger live data refresh
+      if (layersLoaded.flights) updateFlights(viewer);
+      if (layersLoaded.vessels) updateVessels(viewer);
+    });
+
     // Update stats periodically
     setInterval(updateStats, 3000);
 
@@ -450,11 +470,19 @@ async function init() {
         };
         for (const [id, e] of flightMap) {
           const ac = e.acData;
-          if (ac) positionSnapshot.flights.push({ icao24: ac.icao24, lat: ac.latitude, lon: ac.longitude, alt: ac.altitude, heading: ac.heading, isMil: ac.isMilitary, callsign: ac.callsign });
+          if (ac) positionSnapshot.flights.push({
+            icao24: ac.icao24, lat: ac.latitude, lon: ac.longitude, alt: ac.altitude,
+            heading: ac.heading, isMil: ac.isMilitary, callsign: ac.callsign,
+            velocity: ac.velocity, verticalRate: ac.verticalRate, iconClass: ac.iconClass,
+            origin: ac.origin, squawk: ac.squawk, typeCode: ac.typeCode, sizeCategory: ac.sizeCategory,
+          });
         }
         for (const [id, e] of vesselMap) {
           const v = e.vesselData;
-          if (v) positionSnapshot.vessels.push({ mmsi: v.mmsi, lat: v.lat, lon: v.lon, name: v.name, heading: v.heading });
+          if (v) positionSnapshot.vessels.push({
+            mmsi: v.mmsi, lat: v.lat, lon: v.lon, name: v.name, heading: v.heading,
+            cog: v.cog, speed: v.speed, shipType: v.shipType, destination: v.destination, flag: v.flag,
+          });
         }
         // Store in snapshot-store for replay
         pushSnapshot(positionSnapshot);

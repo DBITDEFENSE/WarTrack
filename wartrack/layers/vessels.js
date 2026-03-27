@@ -363,3 +363,76 @@ export function setVesselsVisible(v) {
   visible = v;
   dataSource.show = v;
 }
+
+// ============================================
+// REPLAY — render historical vessel positions from snapshot
+// ============================================
+let replayVesselDS = null;
+let replayVesselEntities = new Map();
+
+export function renderVesselsFromSnapshot(snapshot, viewer) {
+  if (!snapshot?.vessels || !viewer) return;
+
+  if (!replayVesselDS) {
+    replayVesselDS = new Cesium.CustomDataSource('vessels-replay');
+    viewer.dataSources.add(replayVesselDS);
+  }
+
+  if (dataSource) dataSource.show = false;
+  replayVesselDS.show = true;
+
+  replayVesselDS.entities.suspendEvents();
+  const activeIds = new Set();
+
+  for (const v of snapshot.vessels) {
+    if (!v.lat || !v.lon) continue;
+    const id = v.mmsi || `v-${v.lat}-${v.lon}`;
+    activeIds.add(id);
+
+    const existing = replayVesselEntities.get(id);
+    if (existing) {
+      existing.position = Cesium.Cartesian3.fromDegrees(v.lon, v.lat, 0);
+      existing.billboard.rotation = Cesium.Math.toRadians(-(v.heading || v.cog || 0));
+    } else {
+      const color = '#0088ff';
+      const icon = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><path d="M12 2.5 L14 5 L14.5 8 L14.5 17 L13.5 19 L12 20 L10.5 19 L9.5 17 L9.5 8 L10 5 Z" fill="${color}" opacity="0.9"/></svg>`)}`;
+
+      const entity = replayVesselDS.entities.add({
+        id: `replay-vessel-${id}`,
+        position: Cesium.Cartesian3.fromDegrees(v.lon, v.lat, 0),
+        billboard: {
+          image: icon,
+          width: 14,
+          height: 14,
+          rotation: Cesium.Math.toRadians(-(v.heading || v.cog || 0)),
+          verticalOrigin: Cesium.VerticalOrigin.CENTER,
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          disableDepthTestDistance: 0,
+          scaleByDistance: new Cesium.NearFarScalar(1e5, 1.2, 1e7, 0.2),
+        },
+      });
+      entity.entityType = 'vessel';
+      entity.vesselData = v;
+      replayVesselEntities.set(id, entity);
+    }
+  }
+
+  for (const [id, entity] of replayVesselEntities) {
+    if (!activeIds.has(id)) {
+      replayVesselDS.entities.remove(entity);
+      replayVesselEntities.delete(id);
+    }
+  }
+
+  replayVesselDS.entities.resumeEvents();
+  viewer.scene.requestRender();
+}
+
+export function clearReplayVessels(viewer) {
+  if (replayVesselDS) {
+    replayVesselDS.entities.removeAll();
+    replayVesselDS.show = false;
+    replayVesselEntities.clear();
+  }
+  if (dataSource) dataSource.show = visible;
+}
