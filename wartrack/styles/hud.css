@@ -3597,8 +3597,47 @@ body.thermal-active #hud-title {
     align-items: center;
   }
 
-  /* Hide stats on mobile to save space */
-  #hud-stats { display: none; }
+  /* Mobile stats: compact horizontal bar at bottom */
+  #hud-stats {
+    display: flex !important;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 6px 10px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    gap: 0;
+    border-radius: 0;
+    border: none;
+    border-top: 1px solid var(--hud-border);
+    z-index: 101;
+  }
+
+  #hud-stats .stat-row {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    padding: 2px 6px;
+    gap: 1px;
+  }
+
+  #hud-stats .stat-label {
+    font-size: 7px;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+
+  #hud-stats .stat-value {
+    font-size: 12px;
+  }
+
+  /* Hide less critical rows on very small screens */
+  #hud-stats .stat-row:nth-child(n+6) { display: none; }
 
   /* Settings panel full-width on mobile */
   #settings-panel {
@@ -3628,4 +3667,119 @@ body.thermal-active #hud-title {
   }
 
   #hud-title { font-size: 14px; }
+}
+
+/* ============================================
+   TOUCH FEEDBACK — :active states for all interactive elements
+   Ensures tap feedback on mobile where :hover doesn't fire
+   ============================================ */
+.layer-toggle:active { background: rgba(0, 255, 136, 0.08); }
+.hud-btn-back:active { background: rgba(255, 170, 0, 0.2); border-color: #ffaa00; }
+.globe-style-btn:active { border-color: var(--hud-green); background: rgba(0, 255, 136, 0.08); }
+.billing-btn:active { border-color: var(--hud-green); }
+.hud-section-title:active { color: var(--hud-green); }
+.hud-btn-settings:active { background: rgba(0, 255, 136, 0.1); }
+.planet-btn:active { border-color: var(--hud-green); background: rgba(0, 255, 136, 0.08); }
+.hud-btn-news:active,
+.hud-btn-favorites:active,
+.hud-btn-briefing:active,
+.hud-btn-markets:active,
+.hud-btn-reset:active,
+.hud-btn-nexus:active,
+.hud-btn-auth:active,
+.hud-btn-alerts:active,
+.hud-btn-cinematic:active { opacity: 0.8; filter: brightness(1.2); }
+.detail-tab:active { background: rgba(0, 255, 136, 0.1); color: var(--hud-green); }
+.news-card:active { background: rgba(0, 255, 136, 0.06); border-color: var(--hud-green-dim); }
+.market-card:active { background: rgba(0, 255, 136, 0.06); }
+.fav-card:active { background: rgba(0, 255, 136, 0.06); }
+.fav-remove:active { color: var(--hud-red); }
+.briefing-story:active { background: rgba(0, 255, 136, 0.06); }
+.tl-btn:active { background: rgba(0, 255, 136, 0.15); }
+.auth-submit:active { filter: brightness(1.2); }
+.settings-btn:active { filter: brightness(1.2); }
+.gv-btn:active { filter: brightness(1.2); }
+.gv-close:active { background: rgba(255, 51, 68, 0.2); }
+.detail-btn-groundview:active { filter: brightness(1.2); }
+.detail-btn-newsfeed:active { filter: brightness(1.2); }
+.detail-btn-save:active { filter: brightness(1.2); }
+.camera-source-btn:active { border-color: var(--hud-green); }
+.cinematic-btn:active { background: rgba(0, 255, 136, 0.15); }
+.nexus-fly-btn:active { background: rgba(0, 255, 136, 0.15); }
+#nexus-submit:active { filter: brightness(1.2); }
+#nexus-close:active,
+#detail-close:active,
+#news-feed-close:active,
+#settings-close:active,
+#alerts-close:active,
+#market-close:active,
+#favorites-close:active { background: rgba(0, 255, 136, 0.1); }
+#news-feed-refresh:active,
+#market-refresh:active,
+#market-search-btn:active { filter: brightness(1.2); }
+
+/* ============================================
+   SLIDER THUMB — Touch-friendly sizing (44px WCAG minimum)
+   ============================================ */
+.sizer-range::-webkit-slider-thumb {
+  width: 20px;
+  height: 20px;
+  /* Expand touch target beyond visual size */
+  box-shadow: 0 0 0 8px transparent;
+}
+
+.sizer-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  background: var(--hud-green);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* On touch devices, make slider track taller for easier tapping */
+@media (pointer: coarse) {
+  .sizer-range {
+    height: 6px;
+  }
+  .sizer-range::-webkit-slider-thumb {
+    width: 24px;
+    height: 24px;
+  }
+  .sizer-range::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+/* ============================================
+   SAFE AREA INSETS — iPhone notch, Android cutouts
+   ============================================ */
+@supports (padding: env(safe-area-inset-top)) {
+  #hud-top {
+    padding-top: env(safe-area-inset-top, 0px);
+    height: calc(48px + env(safe-area-inset-top, 0px));
+  }
+
+  #hud-layers {
+    top: calc(64px + env(safe-area-inset-top, 0px));
+    left: env(safe-area-inset-left, 16px);
+  }
+
+  #detail-panel,
+  #news-feed-panel,
+  #favorites-panel,
+  #market-panel,
+  #alerts-panel,
+  #settings-panel {
+    top: calc(64px + env(safe-area-inset-top, 0px));
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+
+  /* Bottom stats bar respects home indicator */
+  @media (max-width: 600px) {
+    #hud-stats {
+      padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+    }
+  }
 }
