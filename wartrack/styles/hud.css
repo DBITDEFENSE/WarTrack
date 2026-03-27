@@ -674,6 +674,110 @@ input:checked + .thermal-indicator {
   border-color: var(--hud-cyan);
 }
 
+/* Preview image container */
+.gv-preview-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  background: #080c12;
+}
+
+.gv-preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gv-preview-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0);
+  transition: background 0.2s;
+}
+
+.gv-preview-overlay:hover {
+  background: rgba(0,0,0,0.3);
+}
+
+.gv-preview-hint {
+  opacity: 0;
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--hud-green);
+  background: rgba(0,0,0,0.7);
+  padding: 8px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--hud-border);
+  transition: opacity 0.2s;
+}
+
+.gv-preview-overlay:hover .gv-preview-hint {
+  opacity: 1;
+}
+
+/* No imagery state */
+.gv-no-imagery {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #556;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-align: center;
+  gap: 8px;
+}
+
+.gv-no-icon { font-size: 32px; opacity: 0.5; }
+.gv-no-sub { font-size: 9px; color: #445; }
+
+/* Fallback container */
+.gv-fallback-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #778;
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.gv-fallback-icon { font-size: 36px; margin-bottom: 12px; opacity: 0.5; }
+.gv-fallback-text { max-width: 300px; }
+
+/* Provider badge */
+.gv-provider-badge {
+  font-size: 8px;
+  letter-spacing: 2px;
+  padding: 2px 8px;
+  border-radius: 2px;
+}
+
+.gv-badge-google {
+  color: var(--hud-green);
+  background: rgba(0,255,136,0.08);
+  border: 1px solid rgba(0,255,136,0.2);
+}
+
+.gv-badge-mapillary {
+  color: var(--hud-cyan);
+  background: rgba(0,221,255,0.08);
+  border: 1px solid rgba(0,221,255,0.2);
+}
+
+.gv-badge-satellite {
+  color: var(--hud-amber);
+  background: rgba(255,170,0,0.08);
+  border: 1px solid rgba(255,170,0,0.2);
+}
+
 @media (max-width: 768px) {
   .gv-container {
     width: 95vw;
