@@ -344,18 +344,57 @@ async function fetchFlightsForBbox(lamin, lamax, lomin, lomax) {
   const adsbxPromise = (async () => {
     if (!ADSBX_API_KEY || !apiTracker.canRequest('adsbx')) return [];
     try {
-      apiTracker.recordRequest('adsbx');
-      const centerLat = (parseFloat(lamin) + parseFloat(lamax)) / 2;
-      const centerLon = (parseFloat(lomin) + parseFloat(lomax)) / 2;
-      const dist = Math.min(250, Math.max(50, Math.round(
-        Math.abs(parseFloat(lamax) - parseFloat(lamin)) * 55
-      )));
-      const adsbxUrl = `https://adsbexchange-com1.p.rapidapi.com/v2/lat/${centerLat}/lon/${centerLon}/dist/${dist}/`;
-      const { data, statusCode } = await fetchWithTimeout(adsbxUrl, {
-        headers: { 'X-RapidAPI-Key': ADSBX_API_KEY, 'X-RapidAPI-Host': 'adsbexchange-com1.p.rapidapi.com' }
-      }, 8000);
-      if (statusCode === 200 && data?.ac) return data.ac;
-      apiTracker.recordError('adsbx');
+      const la1 = parseFloat(lamin), la2 = parseFloat(lamax);
+      const lo1 = parseFloat(lomin), lo2 = parseFloat(lomax);
+      const latSpan = Math.abs(la2 - la1);
+      const lonSpan = Math.abs(lo2 - lo1);
+
+      // ADSB-X max radius is 250nm (~4.6°). For large bboxes, split into a grid
+      // of overlapping circles to cover the full area.
+      const MAX_RADIUS_DEG = 4.5; // ~250nm
+      const queryPoints = [];
+
+      if (latSpan <= MAX_RADIUS_DEG * 2 && lonSpan <= MAX_RADIUS_DEG * 2) {
+        // Small bbox — single center query
+        queryPoints.push({ lat: (la1 + la2) / 2, lon: (lo1 + lo2) / 2, dist: 250 });
+      } else {
+        // Large bbox — grid of query points spaced ~8° apart (overlapping 250nm circles)
+        const step = MAX_RADIUS_DEG * 1.6; // slight overlap
+        for (let lat = la1 + step / 2; lat < la2; lat += step) {
+          for (let lon = lo1 + step / 2; lon < lo2; lon += step) {
+            queryPoints.push({ lat: Math.round(lat * 10) / 10, lon: Math.round(lon * 10) / 10, dist: 250 });
+          }
+        }
+        // Cap at 4 queries to stay within budget
+        if (queryPoints.length > 4) {
+          // Pick evenly spaced subset
+          const stride = Math.ceil(queryPoints.length / 4);
+          const subset = [];
+          for (let i = 0; i < queryPoints.length && subset.length < 4; i += stride) {
+            subset.push(queryPoints[i]);
+          }
+          queryPoints.length = 0;
+          queryPoints.push(...subset);
+        }
+      }
+
+      // Fetch all query points in parallel
+      const allAc = [];
+      const results = await Promise.all(queryPoints.map(async (pt) => {
+        if (!apiTracker.canRequest('adsbx')) return [];
+        try {
+          apiTracker.recordRequest('adsbx');
+          const adsbxUrl = `https://adsbexchange-com1.p.rapidapi.com/v2/lat/${pt.lat}/lon/${pt.lon}/dist/${pt.dist}/`;
+          const { data, statusCode } = await fetchWithTimeout(adsbxUrl, {
+            headers: { 'X-RapidAPI-Key': ADSBX_API_KEY, 'X-RapidAPI-Host': 'adsbexchange-com1.p.rapidapi.com' }
+          }, 8000);
+          if (statusCode === 200 && data?.ac) return data.ac;
+          apiTracker.recordError('adsbx');
+        } catch { apiTracker.recordError('adsbx'); }
+        return [];
+      }));
+      for (const acs of results) allAc.push(...acs);
+      return allAc;
     } catch { apiTracker.recordError('adsbx'); }
     return [];
   })();
