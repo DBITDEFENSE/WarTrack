@@ -6,7 +6,7 @@
 import { apiUrl } from '../config.js';
 
 const GOOGLE_API_KEY = 'AIzaSyBv0t6pgo-Dk43kfpmKhCOMeK8PioXDO6g';
-const MAPILLARY_CLIENT_ID = ''; // Add if you get a Mapillary token
+const MAPILLARY_ACCESS_TOKEN = 'MLY|25656738024005433|bb8e68ecf3f32fc3eb615344132edd20';
 
 let modalEl = null;
 
@@ -138,13 +138,30 @@ function showInteractiveStreetView(lat, lon, body, badge) {
 // MAPILLARY FALLBACK
 // ============================================
 async function tryMapillary(lat, lon) {
+  if (!MAPILLARY_ACCESS_TOKEN) return null;
   try {
-    // Mapillary API v4 — search for nearest images
-    // Without a client token, we can still link to the Mapillary viewer
-    // For image search, we'd need an access token
-    // For now, provide a direct link experience
+    // Mapillary API v4 — search for nearest images within 500m
+    const bbox = `${lon - 0.005},${lat - 0.005},${lon + 0.005},${lat + 0.005}`;
+    const resp = await fetch(
+      `https://graph.mapillary.com/images?access_token=${MAPILLARY_ACCESS_TOKEN}&fields=id,thumb_1024_url,thumb_256_url,captured_at,geometry&bbox=${bbox}&limit=1`
+    );
+    if (!resp.ok) throw new Error('Mapillary API error');
+    const data = await resp.json();
+
+    if (data.data && data.data.length > 0) {
+      const img = data.data[0];
+      return {
+        available: true,
+        imageId: img.id,
+        thumbUrl: img.thumb_1024_url || img.thumb_256_url,
+        capturedAt: img.captured_at,
+        viewerUrl: `https://www.mapillary.com/app/?pKey=${img.id}`,
+        source: 'mapillary',
+      };
+    }
+    // No images in bbox — still offer viewer link
     return {
-      available: true,
+      available: false,
       viewerUrl: `https://www.mapillary.com/app/?lat=${lat}&lng=${lon}&z=15`,
       source: 'mapillary',
     };
@@ -154,18 +171,37 @@ async function tryMapillary(lat, lon) {
 }
 
 function showMapillaryResult(result, body, badge, actions, lat, lon) {
-  body.innerHTML = `
-    <div class="gv-fallback-container">
-      <div class="gv-fallback-icon">🗺️</div>
-      <div class="gv-fallback-text">
-        Google Street View unavailable here.
-        <br/>Mapillary may have community-captured imagery.
+  if (result.available && result.thumbUrl) {
+    // Show actual Mapillary image
+    const dateStr = result.capturedAt ? new Date(result.capturedAt).toLocaleDateString() : '';
+    body.innerHTML = `
+      <div class="gv-preview-container">
+        <img class="gv-preview-img" src="${result.thumbUrl}" alt="Mapillary street-level image" />
+        <div class="gv-preview-overlay" id="gv-mapillary-open">
+          <div class="gv-preview-hint">Click to open full Mapillary viewer</div>
+        </div>
+        <div class="gv-info-strip">
+          <span class="gv-provider">MAPILLARY COMMUNITY IMAGE${dateStr ? ` — ${dateStr}` : ''}</span>
+        </div>
       </div>
-      <a href="${result.viewerUrl}" target="_blank" rel="noopener" class="gv-btn gv-btn-primary" style="margin-top:12px;display:inline-block;text-decoration:none;">
-        OPEN MAPILLARY VIEWER →
-      </a>
-    </div>
-  `;
+    `;
+    document.getElementById('gv-mapillary-open')?.addEventListener('click', () => {
+      window.open(result.viewerUrl, '_blank');
+    });
+  } else {
+    body.innerHTML = `
+      <div class="gv-fallback-container">
+        <div class="gv-fallback-icon">🗺️</div>
+        <div class="gv-fallback-text">
+          No Google Street View coverage here.
+          <br/>Mapillary may have nearby community imagery.
+        </div>
+        <a href="${result.viewerUrl}" target="_blank" rel="noopener" class="gv-btn gv-btn-primary" style="margin-top:12px;display:inline-block;text-decoration:none;">
+          SEARCH MAPILLARY →
+        </a>
+      </div>
+    `;
+  }
   badge.textContent = 'MAPILLARY';
   badge.className = 'gv-provider-badge gv-badge-mapillary';
 
