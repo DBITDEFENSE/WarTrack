@@ -776,32 +776,48 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // ---- SOCIAL CONTENT (GDELT + Reddit + Bluesky) ----
+    // ---- SOCIAL CONTENT (GDELT + YouTube RSS + Reddit + Bluesky) ----
     if (urlPath === '/api/social') {
       const region = url.searchParams.get('region') || 'world';
+      // Client can pass a better search query via &q= (hotspot.searchQuery)
+      const searchQuery = url.searchParams.get('q') || region;
       const cacheKey = `social-${region}`;
       if (!global.socialCache) global.socialCache = {};
       const cached = global.socialCache[cacheKey];
-      if (cached && Date.now() - cached.ts < 900000) { // 15 min cache
+      const socialCacheTTL = apiTracker.getAdaptiveTTL('gdelt');
+      if (cached && Date.now() - cached.ts < socialCacheTTL) {
         res.writeHead(200);
         return res.end(JSON.stringify(cached.data));
       }
 
       const items = [];
       const sourcesStatus = {};
+      const seenTitles = new Set(); // dedup across sources
+
+      function addItem(item) {
+        // Deduplicate by normalized title
+        const key = (item.title || '').toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 60);
+        if (key.length > 10 && seenTitles.has(key)) return;
+        seenTitles.add(key);
+        items.push(item);
+      }
 
       // SOURCE 1: GDELT (free, no key, geolocated global event articles)
+      // Primary source — most reliable for geopolitical content
       try {
-        const gdeltQuery = encodeURIComponent(`${region} conflict`);
-        const gdeltUrl = `https://api.gdeltproject.org/api/v2/doc/doc?query=${gdeltQuery}&mode=ArtList&maxrecords=10&format=json&sort=DateDesc`;
-        const { data: gdeltData, statusCode } = await fetchUrl(gdeltUrl);
+        apiTracker.recordRequest('gdelt');
+        // Use proper geopolitical search terms, not display names
+        const gdeltQuery = encodeURIComponent(searchQuery);
+        const gdeltUrl = `https://api.gdeltproject.org/api/v2/doc/doc?query=${gdeltQuery}&mode=ArtList&maxrecords=12&format=json&sort=DateDesc&timespan=7d`;
+        const { data: gdeltData, statusCode } = await fetchWithTimeout(gdeltUrl, {}, 8000);
         if (statusCode === 200 && gdeltData?.articles) {
           for (const art of gdeltData.articles.slice(0, 8)) {
-            items.push({
+            if (!art.title) continue;
+            addItem({
               id: `gdelt-${items.length}-${Date.now()}`,
               source: 'GDELT',
               type: 'article',
-              title: art.title?.substring(0, 140) || '',
+              title: art.title.substring(0, 140),
               author: art.domain || art.sourcecountry || '',
               timestamp: art.seendate || '',
               url: art.url || '',
@@ -813,54 +829,65 @@ const server = http.createServer(async (req, res) => {
           }
           sourcesStatus.gdelt = 'ok';
         } else {
+          apiTracker.recordError('gdelt');
           sourcesStatus.gdelt = 'error';
         }
-      } catch { sourcesStatus.gdelt = 'error'; }
+      } catch { apiTracker.recordError('gdelt'); sourcesStatus.gdelt = 'error'; }
 
-      // SOURCE 2: Reddit (public JSON — proper User-Agent per API guidelines)
+      // SOURCE 2: YouTube RSS (free, no key, no rate limit)
       try {
-        const redditQuery = encodeURIComponent(region);
-        const redditUrl = `https://www.reddit.com/search.json?q=${redditQuery}&sort=new&limit=5&t=week&raw_json=1`;
-        const { data: redditData, statusCode } = await fetchUrl(redditUrl, {
-          headers: { 'User-Agent': 'WarTrack/1.0 (intelligence platform; github.com/wartrack)' }
-        });
-        if (statusCode === 200 && redditData?.data?.children) {
-          for (const child of redditData.data.children.slice(0, 5)) {
-            const post = child.data;
-            if (!post || post.over_18) continue;
-            items.push({
-              id: `reddit-${post.id}`,
-              source: 'Reddit',
-              type: 'post',
-              title: post.title?.substring(0, 120),
-              text: post.selftext?.substring(0, 200),
-              author: post.author,
-              timestamp: new Date(post.created_utc * 1000).toISOString(),
-              url: `https://reddit.com${post.permalink}`,
-              thumbnail: post.thumbnail?.startsWith('http') ? post.thumbnail : '',
-              subreddit: post.subreddit,
-              score: post.score,
-              region,
-              relevance: Math.min(0.9, (post.score || 0) / 1000 + 0.3),
-            });
+        const ytQuery = encodeURIComponent(`${searchQuery} news`);
+        const ytUrl = `https://www.youtube.com/results?search_query=${ytQuery}&sp=CAI%253D`; // sorted by date
+        // YouTube RSS feed via search
+        const ytRssUrl = `https://www.youtube.com/feeds/videos.xml?search_query=${ytQuery}`;
+        const { data: ytData, statusCode } = await fetchWithTimeout(ytRssUrl, {}, 6000);
+        if (statusCode === 200 && typeof ytData === 'string' && ytData.includes('<entry>')) {
+          const entries = ytData.match(/<entry>([\s\S]*?)<\/entry>/g) || [];
+          for (const entry of entries.slice(0, 5)) {
+            const title = entry.match(/<title>(.*?)<\/title>/)?.[1] || '';
+            const videoId = entry.match(/<yt:videoId>(.*?)<\/yt:videoId>/)?.[1] || '';
+            const author = entry.match(/<name>(.*?)<\/name>/)?.[1] || '';
+            const published = entry.match(/<published>(.*?)<\/published>/)?.[1] || '';
+            if (title && videoId) {
+              addItem({
+                id: `yt-${videoId}`,
+                source: 'YouTube',
+                type: 'video',
+                title: title.substring(0, 120),
+                author,
+                timestamp: published,
+                url: `https://www.youtube.com/watch?v=${videoId}`,
+                thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+                embedUrl: `https://www.youtube.com/embed/${videoId}`,
+                region,
+                relevance: 0.7,
+              });
+            }
           }
-          sourcesStatus.reddit = 'ok';
-        } else if (statusCode === 429) {
-          // Rate limited — wait 5s and retry once
-          await new Promise(r => setTimeout(r, 5000));
-          const { data: retryData, statusCode: retryStatus } = await fetchUrl(redditUrl, {
-            headers: { 'User-Agent': 'WarTrack/1.0 (intelligence platform; github.com/wartrack)' }
-          });
-          if (retryStatus === 200 && retryData?.data?.children) {
-            for (const child of retryData.data.children.slice(0, 5)) {
+          sourcesStatus.youtube = 'ok';
+        } else {
+          sourcesStatus.youtube = 'no_results';
+        }
+      } catch { sourcesStatus.youtube = 'error'; }
+
+      // SOURCE 3: Reddit (public JSON — with exponential backoff)
+      if (!global._redditBackoff || Date.now() > global._redditBackoff) {
+        try {
+          const redditQuery = encodeURIComponent(searchQuery);
+          const redditUrl = `https://www.reddit.com/search.json?q=${redditQuery}&sort=new&limit=5&t=week&raw_json=1`;
+          const { data: redditData, statusCode } = await fetchWithTimeout(redditUrl, {
+            headers: { 'User-Agent': 'WarTrack/1.0 (intelligence platform; github.com/DBITDEFENSE/WarTrack)' }
+          }, 6000);
+          if (statusCode === 200 && redditData?.data?.children) {
+            for (const child of redditData.data.children.slice(0, 5)) {
               const post = child.data;
-              if (!post || post.over_18) continue;
-              items.push({
+              if (!post || post.over_18 || !post.title) continue;
+              addItem({
                 id: `reddit-${post.id}`,
                 source: 'Reddit',
                 type: 'post',
-                title: post.title?.substring(0, 120),
-                text: post.selftext?.substring(0, 200),
+                title: post.title.substring(0, 120),
+                text: post.selftext?.substring(0, 200) || '',
                 author: post.author,
                 timestamp: new Date(post.created_utc * 1000).toISOString(),
                 url: `https://reddit.com${post.permalink}`,
@@ -872,27 +899,39 @@ const server = http.createServer(async (req, res) => {
               });
             }
             sourcesStatus.reddit = 'ok';
+            global._redditBackoff = null; // clear backoff on success
+            global._redditBackoffMs = 0;
+          } else if (statusCode === 429) {
+            // Exponential backoff: 30s → 60s → 120s → 240s → 480s (max ~8 min)
+            const backoffMs = Math.min(480000, (global._redditBackoffMs || 15000) * 2);
+            global._redditBackoff = Date.now() + backoffMs;
+            global._redditBackoffMs = backoffMs;
+            sourcesStatus.reddit = `rate_limited (backoff ${Math.round(backoffMs/1000)}s)`;
+            console.warn(`  Reddit 429 — backing off for ${Math.round(backoffMs/1000)}s`);
           } else {
-            sourcesStatus.reddit = 'rate_limited';
+            sourcesStatus.reddit = `http_${statusCode}`;
           }
-        } else {
-          sourcesStatus.reddit = 'error';
-        }
-      } catch { sourcesStatus.reddit = 'error'; }
+        } catch (err) { sourcesStatus.reddit = `error: ${err.message}`; }
+      } else {
+        const waitSec = Math.round((global._redditBackoff - Date.now()) / 1000);
+        sourcesStatus.reddit = `backoff (${waitSec}s remaining)`;
+      }
 
-      // SOURCE 3: Bluesky (public search, no auth needed)
+      // SOURCE 4: Bluesky (public search, no auth needed)
       try {
-        const bskyQuery = encodeURIComponent(region);
+        const bskyQuery = encodeURIComponent(searchQuery);
         const bskyUrl = `https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${bskyQuery}&limit=5&sort=latest`;
-        const { data: bskyData, statusCode } = await fetchUrl(bskyUrl);
+        const { data: bskyData, statusCode } = await fetchWithTimeout(bskyUrl, {}, 6000);
         if (statusCode === 200 && bskyData?.posts) {
           for (const post of bskyData.posts.slice(0, 5)) {
-            items.push({
+            const text = post.record?.text || '';
+            if (!text) continue;
+            addItem({
               id: `bsky-${post.uri?.split('/').pop()}`,
               source: 'Bluesky',
               type: 'post',
-              title: post.record?.text?.substring(0, 120) || '',
-              author: post.author?.displayName || post.author?.handle,
+              title: text.substring(0, 120),
+              author: post.author?.displayName || post.author?.handle || '',
               timestamp: post.record?.createdAt || '',
               url: `https://bsky.app/profile/${post.author?.handle}/post/${post.uri?.split('/').pop()}`,
               thumbnail: '',
@@ -906,11 +945,16 @@ const server = http.createServer(async (req, res) => {
         }
       } catch { sourcesStatus.bluesky = 'error'; }
 
-      // Sort by relevance
-      items.sort((a, b) => (b.relevance || 0) - (a.relevance || 0));
+      // Sort by relevance then recency
+      items.sort((a, b) => {
+        const relDiff = (b.relevance || 0) - (a.relevance || 0);
+        if (Math.abs(relDiff) > 0.1) return relDiff;
+        // Within same relevance tier, sort by recency
+        return new Date(b.timestamp || 0) - new Date(a.timestamp || 0);
+      });
 
       const activeSources = Object.entries(sourcesStatus).filter(([,v]) => v === 'ok').map(([k]) => k);
-      const result = { items: items.slice(0, 15), region, sources: activeSources, sourcesStatus };
+      const result = { items: items.slice(0, 20), region, sources: activeSources, sourcesStatus };
       global.socialCache[cacheKey] = { data: result, ts: Date.now() };
       res.writeHead(200);
       return res.end(JSON.stringify(result));

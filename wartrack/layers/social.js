@@ -122,7 +122,7 @@ export function initSocial(viewer) {
  * @param {number} lon - Region center longitude
  * @returns {Promise<SocialContentItem[]>}
  */
-export async function fetchContentForRegion(regionName, lat, lon) {
+export async function fetchContentForRegion(regionName, lat, lon, searchQuery) {
   // Check cache
   const cached = contentCache.get(regionName);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
@@ -130,7 +130,9 @@ export async function fetchContentForRegion(regionName, lat, lon) {
   }
 
   try {
-    const resp = await dedupFetch(apiUrl(`/api/social?region=${encodeURIComponent(regionName)}&lat=${lat}&lon=${lon}`));
+    // Pass searchQuery for better API results (e.g. "Ukraine war Russia" instead of "Ukraine Front")
+    const q = searchQuery ? `&q=${encodeURIComponent(searchQuery)}` : '';
+    const resp = await dedupFetch(apiUrl(`/api/social?region=${encodeURIComponent(regionName)}&lat=${lat}&lon=${lon}${q}`));
     if (!resp.ok) return [];
     const data = await resp.json();
     const items = data.items || [];
@@ -171,7 +173,7 @@ export async function loadContentForVisibleRegions(viewer) {
     const dlon = Math.abs(hs.lon - camLon);
     if (dlat > 15 || dlon > 15) continue; // skip far hotspots
 
-    const items = await fetchContentForRegion(hs.name, hs.lat, hs.lon);
+    const items = await fetchContentForRegion(hs.name, hs.lat, hs.lon, hs.searchQuery);
     renderContentItems(items, hs);
     // Check for conflict keyword spikes → fire OSINT alert
     checkOsintAlert(items, hs.name, hs.lat, hs.lon);
