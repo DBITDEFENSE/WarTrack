@@ -23,6 +23,8 @@ const GNEWS_API_KEY = process.env.GNEWS_API_KEY || '';
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || '';
 const WINDY_WEBCAMS_KEY = process.env.WINDY_WEBCAMS_KEY || '';
+const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_KEY || '';
+const MAPILLARY_TOKEN = process.env.MAPILLARY_TOKEN || '';
 const ADSBX_API_KEY = process.env.ADSBX_API_KEY || '';
 
 // ADS-B Exchange cache
@@ -920,6 +922,79 @@ const server = http.createServer(async (req, res) => {
         }
         res.writeHead(500);
         return res.end(JSON.stringify({ error: err.message }));
+      }
+    }
+
+    // ---- STREET VIEW PROXY (keeps Google API key server-side) ----
+    if (urlPath === '/api/streetview') {
+      if (!GOOGLE_MAPS_KEY) {
+        res.writeHead(404);
+        return res.end('No Google Maps key configured');
+      }
+      const lat = url.searchParams.get('lat') || '0';
+      const lon = url.searchParams.get('lon') || '0';
+      try {
+        const gUrl = `https://maps.googleapis.com/maps/api/streetview?size=800x400&location=${lat},${lon}&key=${GOOGLE_MAPS_KEY}&return_error_code=true`;
+        const mod = await import('https');
+        // Pipe the image response directly
+        const imgResp = await new Promise((resolve, reject) => {
+          (await import('https')).default.get(gUrl, resolve).on('error', reject);
+        });
+        res.writeHead(imgResp.statusCode, {
+          'Content-Type': imgResp.headers['content-type'] || 'image/jpeg',
+          'Cache-Control': 'public, max-age=86400',
+        });
+        imgResp.pipe(res);
+        return;
+      } catch {
+        res.writeHead(500);
+        return res.end('Street view fetch failed');
+      }
+    }
+
+    // ---- STATIC MAP PROXY ----
+    if (urlPath === '/api/staticmap') {
+      if (!GOOGLE_MAPS_KEY) {
+        res.writeHead(404);
+        return res.end('No Google Maps key configured');
+      }
+      const lat = url.searchParams.get('lat') || '0';
+      const lon = url.searchParams.get('lon') || '0';
+      try {
+        const gUrl = `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lon}&zoom=16&size=800x400&maptype=satellite&key=${GOOGLE_MAPS_KEY}`;
+        const imgResp = await new Promise((resolve, reject) => {
+          (await import('https')).default.get(gUrl, resolve).on('error', reject);
+        });
+        res.writeHead(imgResp.statusCode, {
+          'Content-Type': imgResp.headers['content-type'] || 'image/png',
+          'Cache-Control': 'public, max-age=86400',
+        });
+        imgResp.pipe(res);
+        return;
+      } catch {
+        res.writeHead(500);
+        return res.end('Static map fetch failed');
+      }
+    }
+
+    // ---- MAPILLARY IMAGE SEARCH PROXY ----
+    if (urlPath === '/api/mapillary') {
+      if (!MAPILLARY_TOKEN) {
+        res.writeHead(200);
+        return res.end(JSON.stringify({ data: [] }));
+      }
+      const lat = parseFloat(url.searchParams.get('lat') || '0');
+      const lon = parseFloat(url.searchParams.get('lon') || '0');
+      const bbox = `${lon - 0.005},${lat - 0.005},${lon + 0.005},${lat + 0.005}`;
+      try {
+        const { data, statusCode } = await fetchUrl(
+          `https://graph.mapillary.com/images?access_token=${MAPILLARY_TOKEN}&fields=id,thumb_1024_url,thumb_256_url,captured_at,geometry&bbox=${bbox}&limit=1`
+        );
+        res.writeHead(statusCode === 200 ? 200 : 500);
+        return res.end(JSON.stringify(data));
+      } catch {
+        res.writeHead(200);
+        return res.end(JSON.stringify({ data: [] }));
       }
     }
 

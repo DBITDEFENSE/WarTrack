@@ -5,8 +5,9 @@
 
 import { apiUrl } from '../config.js';
 
-const GOOGLE_API_KEY = 'AIzaSyBv0t6pgo-Dk43kfpmKhCOMeK8PioXDO6g';
-const MAPILLARY_ACCESS_TOKEN = 'MLY|25656738024005433|bb8e68ecf3f32fc3eb615344132edd20';
+// API keys are server-side only — frontend proxies through /api/streetview and /api/mapillary
+const GOOGLE_API_KEY = ''; // DO NOT put keys here — they go in Railway env vars
+const MAPILLARY_ACCESS_TOKEN = '';
 
 let modalEl = null;
 
@@ -65,7 +66,7 @@ export async function openGroundView(lat, lon, name = '', context = {}) {
   body.innerHTML = `
     <div class="gv-preview-container">
       <img class="gv-preview-img" id="gv-preview"
-        src="https://maps.googleapis.com/maps/api/streetview?size=800x400&location=${lat},${lon}&key=${GOOGLE_API_KEY}&return_error_code=true"
+        src="${apiUrl(`/api/streetview?lat=${lat}&lon=${lon}`)}"
         alt="Street view preview"
         onerror="this.style.display='none'; document.getElementById('gv-no-sv')?.classList.remove('hidden');"
       />
@@ -122,15 +123,10 @@ export async function openGroundView(lat, lon, name = '', context = {}) {
 // INTERACTIVE STREET VIEW (Google Embed)
 // ============================================
 function showInteractiveStreetView(lat, lon, body, badge) {
-  body.innerHTML = `
-    <div class="gv-embed-container">
-      <iframe class="gv-iframe"
-        src="https://www.google.com/maps/embed/v1/streetview?key=${GOOGLE_API_KEY}&location=${lat},${lon}&heading=0&pitch=0&fov=90"
-        allowfullscreen loading="lazy"
-      ></iframe>
-    </div>
-  `;
-  badge.textContent = 'GOOGLE STREET VIEW — INTERACTIVE';
+  // Interactive mode: open Google Street View in a new tab (embed requires key in URL)
+  // For in-app, show the static preview large and link out
+  window.open(`https://www.google.com/maps/@${lat},${lon},3a,75y,0h,90t/data=!3m1!1e3`, '_blank');
+  badge.textContent = 'GOOGLE STREET VIEW — OPENED IN NEW TAB';
   badge.className = 'gv-provider-badge gv-badge-google';
 }
 
@@ -138,13 +134,9 @@ function showInteractiveStreetView(lat, lon, body, badge) {
 // MAPILLARY FALLBACK
 // ============================================
 async function tryMapillary(lat, lon) {
-  if (!MAPILLARY_ACCESS_TOKEN) return null;
   try {
-    // Mapillary API v4 — search for nearest images within 500m
-    const bbox = `${lon - 0.005},${lat - 0.005},${lon + 0.005},${lat + 0.005}`;
-    const resp = await fetch(
-      `https://graph.mapillary.com/images?access_token=${MAPILLARY_ACCESS_TOKEN}&fields=id,thumb_1024_url,thumb_256_url,captured_at,geometry&bbox=${bbox}&limit=1`
-    );
+    // Mapillary search goes through server proxy (keeps token server-side)
+    const resp = await fetch(apiUrl(`/api/mapillary?lat=${lat}&lon=${lon}`));
     if (!resp.ok) throw new Error('Mapillary API error');
     const data = await resp.json();
 
@@ -218,7 +210,7 @@ function showSatelliteFallback(lat, lon, body, badge) {
   body.innerHTML = `
     <div class="gv-preview-container">
       <img class="gv-preview-img"
-        src="https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lon}&zoom=16&size=800x400&maptype=satellite&key=${GOOGLE_API_KEY}"
+        src="${apiUrl(`/api/staticmap?lat=${lat}&lon=${lon}`)}"
         alt="Satellite view"
       />
       <div class="gv-info-strip">
